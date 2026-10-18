@@ -76,6 +76,7 @@ TMDB_API_BASE_URL = 'https://api.themoviedb.org/3'
 TMDB_IMAGE_BASE_URL = 'https://image.tmdb.org/t/p/w342'
 TMDB_TIMEOUT_SECONDS = 8
 TMDB_REGION = os.environ.get('TMDB_REGION', 'US')
+TMDB_CACHE_SECONDS = 60 * 60 * 6
 
 CACHES = {
     'default': {

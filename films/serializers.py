@@ -14,6 +14,10 @@ class AddFilmSerializer(serializers.Serializer):
     film_id = FilmIdField()
 
 
+class PageParamSerializer(serializers.Serializer):
+    page = serializers.IntegerField(min_value=1, max_value=500, default=1)
+
+
 class AddTop5Serializer(serializers.Serializer):
     film_id = FilmIdField()
     slot = serializers.IntegerField(min_value=1, max_value=TOP5_SIZE, required=False)
