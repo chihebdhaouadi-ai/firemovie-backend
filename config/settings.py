@@ -3,8 +3,10 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'dev-secret-key-change-in-prod')
 DEBUG = os.environ.get('DJANGO_DEBUG', 'True').lower() in ('true', '1')
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY') or (
+    'dev-secret-key-change-in-prod' if DEBUG else None
+)
 ALLOWED_HOSTS = ['*']
 
 INSTALLED_APPS = [
@@ -64,8 +66,22 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.TokenAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.AllowAny',
+        'rest_framework.permissions.IsAuthenticated',
     ],
+    'EXCEPTION_HANDLER': 'config.exceptions.api_exception_handler',
+}
+
+TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '')
+TMDB_API_BASE_URL = 'https://api.themoviedb.org/3'
+TMDB_IMAGE_BASE_URL = 'https://image.tmdb.org/t/p/w342'
+TMDB_TIMEOUT_SECONDS = 8
+TMDB_REGION = os.environ.get('TMDB_REGION', 'US')
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'filmwise-default',
+    }
 }
 
 CORS_ALLOW_ALL_ORIGINS = True
