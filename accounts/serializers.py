@@ -1,5 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import authenticate
+from films.models import FilmEntry
+from films.services import film_ids_for
 from .models import User
 
 
@@ -35,7 +37,20 @@ class LoginSerializer(serializers.Serializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
+    top_movies = serializers.SerializerMethodField()
+    watched_movies = serializers.SerializerMethodField()
+    watchlist_movies = serializers.SerializerMethodField()
+
     class Meta:
         model = User
         fields = ('id', 'username', 'email', 'balance',
                   'top_movies', 'watched_movies', 'watchlist_movies')
+
+    def get_top_movies(self, obj):
+        return film_ids_for(obj, FilmEntry.ListType.TOP_5)
+
+    def get_watched_movies(self, obj):
+        return film_ids_for(obj, FilmEntry.ListType.WATCHED)
+
+    def get_watchlist_movies(self, obj):
+        return film_ids_for(obj, FilmEntry.ListType.WATCHLIST)
