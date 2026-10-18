@@ -1,3 +1,9 @@
+import json
+from unittest import mock
+from urllib.error import HTTPError, URLError
+
+from django.core.cache import cache
+from django.test import override_settings
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
@@ -203,6 +209,29 @@ class UserScopingTests(ListApiTestCase):
         response = self.client.post(self.url(WATCHED), {'film_id': '100'}, format='json')
         self.assertEqual(response.status_code, 201)
 
+    def test_cannot_reorder_another_users_top5(self):
+        # Bob fills slot 1 directly; Alice must not be able to touch it.
+        FilmEntry.objects.create(user=self.other, film_id='bob-film',
+                                 list_type='top_5', slot_index=1)
+        # Alice PATCHes Bob's film -> 404 (not in her list).
+        response = self.client.patch(
+            self.url(TOP5, 'bob-film'), {'slot': 2}, format='json',
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(self.slots(self.other), {1: 'bob-film'})
+
+    def test_collection_add_is_scoped_to_the_authenticated_user(self):
+        self.client.post(self.url(WATCHLIST), {'film_id': '101'}, format='json')
+        self.client.force_authenticate(self.other)
+        self.client.post(self.url(WATCHLIST), {'film_id': '202'}, format='json')
+        # Switch back to Alice and confirm she only sees her own entry.
+        self.client.force_authenticate(self.user)
+        response = self.client.get(self.url(WATCHLIST))
+        self.assertEqual(
+            {row['film_id'] for row in response.data['results']},
+            {'101'},
+        )
+
 
 class AuthenticationTests(APITestCase):
     def test_unauthenticated_requests_get_401(self):
@@ -255,3 +284,168 @@ class ErrorShapeTests(ListApiTestCase):
     def test_errors_carry_detail_and_code(self):
         response = self.client.delete(self.url(TOP5, '999'))
         self.assertEqual(set(response.data.keys()), {'detail', 'code'})
+
+
+class FakeResponse:
+    def __init__(self, payload):
+        self.body = json.dumps(payload).encode('utf-8')
+
+    def read(self):
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def fake_tmdb(routes, calls=None):
+    def opener(url, timeout=None):
+        if calls is not None:
+            calls.append(url)
+        for fragment, payload in routes.items():
+            if fragment in url:
+                if isinstance(payload, Exception):
+                    raise payload
+                return FakeResponse(payload)
+        raise AssertionError(f'unexpected TMDB call: {url}')
+    return opener
+
+
+@override_settings(TMDB_API_KEY='test-key', TMDB_REGION='US')
+class CatalogTests(ListApiTestCase):
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+
+    def search(self, query, routes, calls=None, **params):
+        with mock.patch('films.tmdb.urlopen', side_effect=fake_tmdb(routes, calls)):
+            return self.client.get('/api/films/search', {'q': query, **params})
+
+    def test_search_requires_two_characters(self):
+        response = self.client.get('/api/films/search', {'q': 'a'})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['code'], 'query_too_short')
+
+    def test_search_normalizes_results_and_reports_in_lists(self):
+        FilmEntry.objects.create(user=self.user, film_id='278', list_type='watched')
+        payload = {
+            'page': 1, 'total_pages': 3, 'total_results': 50,
+            'results': [{
+                'id': 278, 'title': 'The Shawshank Redemption',
+                'release_date': '1994-09-23', 'poster_path': '/p.jpg',
+            }],
+        }
+        response = self.search('shaw', {'/search/movie': payload})
+        self.assertEqual(response.status_code, 200)
+        result = response.data['results'][0]
+        self.assertEqual(result['film_id'], '278')
+        self.assertEqual(result['year'], 1994)
+        self.assertEqual(result['poster_url'], 'https://image.tmdb.org/t/p/w342/p.jpg')
+        self.assertEqual(result['in_lists'], ['watched'])
+        self.assertEqual(response.data['total_pages'], 3)
+
+    def test_search_sends_key_query_and_page_upstream(self):
+        calls = []
+        self.search('matrix', {'/search/movie': {'results': []}}, calls, page=2)
+        self.assertIn('api_key=test-key', calls[0])
+        self.assertIn('query=matrix', calls[0])
+        self.assertIn('page=2', calls[0])
+
+    def test_search_responses_are_cached(self):
+        calls = []
+        routes = {'/search/movie': {'results': []}}
+        self.search('matrix', routes, calls)
+        self.search('matrix', routes, calls)
+        self.assertEqual(len(calls), 1)
+
+    def test_invalid_page_is_400(self):
+        response = self.client.get('/api/films/search', {'q': 'matrix', 'page': 0})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['code'], 'validation_error')
+
+    def test_missing_key_returns_503(self):
+        with override_settings(TMDB_API_KEY=''):
+            response = self.client.get('/api/films/search', {'q': 'matrix'})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.data['code'], 'tmdb_not_configured')
+
+    def test_upstream_failure_returns_502(self):
+        with mock.patch('films.tmdb.urlopen', side_effect=URLError('down')):
+            response = self.client.get('/api/films/search', {'q': 'matrix'})
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.data['code'], 'tmdb_unavailable')
+
+    def test_detail_by_numeric_id_includes_watch_providers(self):
+        payload = {
+            'id': 278, 'imdb_id': 'tt0111161', 'title': 'The Shawshank Redemption',
+            'release_date': '1994-09-23', 'overview': 'Hope.', 'runtime': 142,
+            'genres': [{'name': 'Drama'}], 'poster_path': '/p.jpg',
+            'backdrop_path': '/b.jpg', 'vote_average': 8.7,
+            'watch/providers': {'results': {'US': {
+                'link': 'https://www.justwatch.com/us/movie/x',
+                'flatrate': [{'provider_name': 'Netflix', 'logo_path': '/n.jpg'}],
+            }}},
+        }
+        with mock.patch('films.tmdb.urlopen', side_effect=fake_tmdb({'/movie/278': payload})):
+            response = self.client.get('/api/films/278/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['tmdb_id'], '278')
+        self.assertEqual(response.data['imdb_id'], 'tt0111161')
+        self.assertEqual(response.data['genres'], ['Drama'])
+        self.assertEqual(response.data['watch_providers']['link'], 'https://www.justwatch.com/us/movie/x')
+        self.assertEqual(response.data['watch_providers']['flatrate'][0]['name'], 'Netflix')
+
+    def test_detail_resolves_legacy_imdb_id_through_find(self):
+        routes = {
+            '/find/tt0111161': {'movie_results': [{'id': 278}]},
+            '/movie/278': {'id': 278, 'title': 'X', 'watch/providers': {'results': {}}},
+        }
+        with mock.patch('films.tmdb.urlopen', side_effect=fake_tmdb(routes)):
+            response = self.client.get('/api/films/tt0111161/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['film_id'], 'tt0111161')
+        self.assertEqual(response.data['tmdb_id'], '278')
+        self.assertEqual(
+            response.data['watch_providers'],
+            {'link': None, 'flatrate': [], 'rent': [], 'buy': []},
+        )
+
+    def test_detail_for_unknown_imdb_id_is_404(self):
+        routes = {'/find/tt9999999': {'movie_results': []}}
+        with mock.patch('films.tmdb.urlopen', side_effect=fake_tmdb(routes)):
+            response = self.client.get('/api/films/tt9999999/')
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data['code'], 'film_not_found')
+
+    def test_detail_for_missing_tmdb_movie_is_404(self):
+        error = HTTPError('https://api.themoviedb.org', 404, 'Not Found', None, None)
+        with mock.patch('films.tmdb.urlopen', side_effect=error):
+            response = self.client.get('/api/films/99999999/')
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data['code'], 'film_not_found')
+
+    def test_detail_timeout_returns_502(self):
+        with mock.patch('films.tmdb.urlopen', side_effect=TimeoutError()):
+            response = self.client.get('/api/films/278/')
+        self.assertEqual(response.status_code, 502)
+
+    def test_detail_missing_key_returns_503(self):
+        with override_settings(TMDB_API_KEY=''):
+            response = self.client.get('/api/films/278/')
+        self.assertEqual(response.status_code, 503)
+
+    def test_detail_responses_are_cached(self):
+        calls = []
+        routes = {'/movie/278': {'id': 278, 'watch/providers': {'results': {}}}}
+        with mock.patch('films.tmdb.urlopen', side_effect=fake_tmdb(routes, calls)):
+            self.client.get('/api/films/278/')
+            self.client.get('/api/films/278/')
+        self.assertEqual(len(calls), 1)
+
+
+class CatalogAuthTests(APITestCase):
+    def test_catalog_requires_authentication(self):
+        self.assertEqual(self.client.get('/api/films/search', {'q': 'matrix'}).status_code, 401)
+        self.assertEqual(self.client.get('/api/films/278/').status_code, 401)
