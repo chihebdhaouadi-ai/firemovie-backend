@@ -4,7 +4,7 @@ from rest_framework.views import APIView
 
 from .serializers import PageParamSerializer
 from .services import lists_containing
-from .tmdb import movie_detail, search_movies
+from .movie_source import movie_detail, search_movies
 
 MIN_QUERY_LENGTH = 2
 MAX_QUERY_LENGTH = 100

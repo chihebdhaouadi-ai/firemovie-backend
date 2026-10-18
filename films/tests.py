@@ -157,7 +157,7 @@ class WatchedAndWatchlistTests(ListApiTestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.data['code'], 'not_in_list')
 
-    def test_numeric_tmdb_id_is_accepted_in_path(self):
+    def test_numeric_film_id_is_accepted_for_list_entries(self):
         self.client.post(self.url(WATCHLIST), {'film_id': '278'}, format='json')
         self.assertEqual(self.client.delete(self.url(WATCHLIST, '278')).status_code, 204)
 
@@ -300,27 +300,48 @@ class FakeResponse:
         return False
 
 
-def fake_tmdb(routes, calls=None):
-    def opener(url, timeout=None):
+def fake_upstream(routes, calls=None):
+    def opener(request, timeout=None):
+        url = request.full_url
         if calls is not None:
-            calls.append(url)
+            calls.append(request)
         for fragment, payload in routes.items():
             if fragment in url:
                 if isinstance(payload, Exception):
                     raise payload
                 return FakeResponse(payload)
-        raise AssertionError(f'unexpected TMDB call: {url}')
+        raise AssertionError(f'unexpected upstream call: {url}')
     return opener
 
 
-@override_settings(TMDB_API_KEY='test-key', TMDB_REGION='US')
+SHAWSHANK_FIND = {'results': [
+    {
+        'id': '/title/tt0111161/', 'titleType': 'movie', 'year': 1994,
+        'title': 'The Shawshank Redemption', 'image': {'url': 'https://img/p.jpg'},
+    },
+    {'id': '/title/tt0944947/', 'titleType': 'tvSeries', 'title': 'Some Show'},
+]}
+
+SHAWSHANK_OVERVIEW = {'title': {
+    'title': 'The Shawshank Redemption', 'year': 1994,
+    'plot': {'plotText': {'plainText': 'Hope.'}},
+    'runtime': {'seconds': 8520},
+    'genres': {'genres': [{'text': 'Drama'}]},
+    'primaryImage': {'url': 'https://img/p.jpg'},
+    'ratingsSummary': {'aggregateRating': 9.3},
+}}
+
+SHAWSHANK_CREDITS = {'crew': {'director': [{'name': 'Frank Darabont'}]}}
+
+
+@override_settings(RAPIDAPI_KEY='test-key')
 class CatalogTests(ListApiTestCase):
     def setUp(self):
         super().setUp()
         cache.clear()
 
     def search(self, query, routes, calls=None, **params):
-        with mock.patch('films.tmdb.urlopen', side_effect=fake_tmdb(routes, calls)):
+        with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes, calls)):
             return self.client.get('/api/films/search', {'q': query, **params})
 
     def test_search_requires_two_characters(self):
@@ -328,124 +349,120 @@ class CatalogTests(ListApiTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data['code'], 'query_too_short')
 
-    def test_search_normalizes_results_and_reports_in_lists(self):
-        FilmEntry.objects.create(user=self.user, film_id='278', list_type='watched')
-        payload = {
-            'page': 1, 'total_pages': 3, 'total_results': 50,
-            'results': [{
-                'id': 278, 'title': 'The Shawshank Redemption',
-                'release_date': '1994-09-23', 'poster_path': '/p.jpg',
-            }],
-        }
-        response = self.search('shaw', {'/search/movie': payload})
+    def test_search_keeps_only_movies_and_reports_in_lists(self):
+        FilmEntry.objects.create(user=self.user, film_id='tt0111161', list_type='watched')
+        response = self.search('shaw', {'/title/v2/find': SHAWSHANK_FIND})
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data['results']), 1)
         result = response.data['results'][0]
-        self.assertEqual(result['film_id'], '278')
+        self.assertEqual(result['film_id'], 'tt0111161')
+        self.assertEqual(result['title'], 'The Shawshank Redemption')
         self.assertEqual(result['year'], 1994)
-        self.assertEqual(result['poster_url'], 'https://image.tmdb.org/t/p/w342/p.jpg')
+        self.assertEqual(result['poster_url'], 'https://img/p.jpg')
         self.assertEqual(result['in_lists'], ['watched'])
-        self.assertEqual(response.data['total_pages'], 3)
 
-    def test_search_sends_key_query_and_page_upstream(self):
+    def test_search_sends_key_header_and_title_without_key_in_url(self):
         calls = []
-        self.search('matrix', {'/search/movie': {'results': []}}, calls, page=2)
-        self.assertIn('api_key=test-key', calls[0])
-        self.assertIn('query=matrix', calls[0])
-        self.assertIn('page=2', calls[0])
+        self.search('joker', {'/title/v2/find': {'results': []}}, calls)
+        request = calls[0]
+        self.assertEqual(request.get_header('X-rapidapi-key'), 'test-key')
+        self.assertEqual(request.get_header('X-rapidapi-host'), 'online-movie-database.p.rapidapi.com')
+        self.assertIn('title=joker', request.full_url)
+        self.assertNotIn('test-key', request.full_url)
+
+    def test_later_pages_are_empty_without_upstream_call(self):
+        calls = []
+        response = self.search('joker', {'/title/v2/find': SHAWSHANK_FIND}, calls, page=2)
+        self.assertEqual(response.data['results'], [])
+        self.assertEqual(response.data['total_pages'], 1)
+        self.assertEqual(calls, [])
 
     def test_search_responses_are_cached(self):
         calls = []
-        routes = {'/search/movie': {'results': []}}
-        self.search('matrix', routes, calls)
-        self.search('matrix', routes, calls)
+        routes = {'/title/v2/find': {'results': []}}
+        self.search('joker', routes, calls)
+        self.search('joker', routes, calls)
         self.assertEqual(len(calls), 1)
 
     def test_invalid_page_is_400(self):
-        response = self.client.get('/api/films/search', {'q': 'matrix', 'page': 0})
+        response = self.client.get('/api/films/search', {'q': 'joker', 'page': 0})
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data['code'], 'validation_error')
 
     def test_missing_key_returns_503(self):
-        with override_settings(TMDB_API_KEY=''):
-            response = self.client.get('/api/films/search', {'q': 'matrix'})
+        with override_settings(RAPIDAPI_KEY=''):
+            response = self.client.get('/api/films/search', {'q': 'joker'})
         self.assertEqual(response.status_code, 503)
-        self.assertEqual(response.data['code'], 'tmdb_not_configured')
+        self.assertEqual(response.data['code'], 'movie_source_not_configured')
 
-    def test_upstream_failure_returns_502(self):
-        with mock.patch('films.tmdb.urlopen', side_effect=URLError('down')):
-            response = self.client.get('/api/films/search', {'q': 'matrix'})
+    def test_network_failure_returns_502(self):
+        with mock.patch('films.movie_source.urlopen', side_effect=URLError('down')):
+            response = self.client.get('/api/films/search', {'q': 'joker'})
         self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.data['code'], 'tmdb_unavailable')
+        self.assertEqual(response.data['code'], 'movie_source_unavailable')
 
-    def test_detail_by_numeric_id_includes_watch_providers(self):
-        payload = {
-            'id': 278, 'imdb_id': 'tt0111161', 'title': 'The Shawshank Redemption',
-            'release_date': '1994-09-23', 'overview': 'Hope.', 'runtime': 142,
-            'genres': [{'name': 'Drama'}], 'poster_path': '/p.jpg',
-            'backdrop_path': '/b.jpg', 'vote_average': 8.7,
-            'watch/providers': {'results': {'US': {
-                'link': 'https://www.justwatch.com/us/movie/x',
-                'flatrate': [{'provider_name': 'Netflix', 'logo_path': '/n.jpg'}],
-            }}},
-        }
-        with mock.patch('films.tmdb.urlopen', side_effect=fake_tmdb({'/movie/278': payload})):
-            response = self.client.get('/api/films/278/')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data['tmdb_id'], '278')
-        self.assertEqual(response.data['imdb_id'], 'tt0111161')
-        self.assertEqual(response.data['genres'], ['Drama'])
-        self.assertEqual(response.data['watch_providers']['link'], 'https://www.justwatch.com/us/movie/x')
-        self.assertEqual(response.data['watch_providers']['flatrate'][0]['name'], 'Netflix')
+    def test_rejected_key_returns_502(self):
+        error = HTTPError('https://rapidapi.com', 403, 'Forbidden', None, None)
+        with mock.patch('films.movie_source.urlopen', side_effect=error):
+            response = self.client.get('/api/films/search', {'q': 'joker'})
+        self.assertEqual(response.status_code, 502)
 
-    def test_detail_resolves_legacy_imdb_id_through_find(self):
+    def test_detail_combines_overview_and_director(self):
         routes = {
-            '/find/tt0111161': {'movie_results': [{'id': 278}]},
-            '/movie/278': {'id': 278, 'title': 'X', 'watch/providers': {'results': {}}},
+            '/title/get-overview-details': SHAWSHANK_OVERVIEW,
+            '/title/get-full-credits': SHAWSHANK_CREDITS,
         }
-        with mock.patch('films.tmdb.urlopen', side_effect=fake_tmdb(routes)):
+        with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes)):
             response = self.client.get('/api/films/tt0111161/')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['film_id'], 'tt0111161')
-        self.assertEqual(response.data['tmdb_id'], '278')
-        self.assertEqual(
-            response.data['watch_providers'],
-            {'link': None, 'flatrate': [], 'rent': [], 'buy': []},
-        )
+        self.assertEqual(response.data['title'], 'The Shawshank Redemption')
+        self.assertEqual(response.data['runtime'], 142)
+        self.assertEqual(response.data['genres'], ['Drama'])
+        self.assertEqual(response.data['director'], 'Frank Darabont')
+        self.assertEqual(response.data['rating'], 9.3)
+        self.assertEqual(response.data['in_lists'], [])
 
     def test_detail_for_unknown_imdb_id_is_404(self):
-        routes = {'/find/tt9999999': {'movie_results': []}}
-        with mock.patch('films.tmdb.urlopen', side_effect=fake_tmdb(routes)):
+        error = HTTPError('https://rapidapi.com', 404, 'Not Found', None, None)
+        with mock.patch('films.movie_source.urlopen', side_effect=error):
             response = self.client.get('/api/films/tt9999999/')
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.data['code'], 'film_not_found')
 
-    def test_detail_for_missing_tmdb_movie_is_404(self):
-        error = HTTPError('https://api.themoviedb.org', 404, 'Not Found', None, None)
-        with mock.patch('films.tmdb.urlopen', side_effect=error):
-            response = self.client.get('/api/films/99999999/')
+    def test_detail_without_title_payload_is_404(self):
+        routes = {'/title/get-overview-details': {}, '/title/get-full-credits': {}}
+        with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes)):
+            response = self.client.get('/api/films/tt0111161/')
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data['code'], 'film_not_found')
 
-    def test_detail_timeout_returns_502(self):
-        with mock.patch('films.tmdb.urlopen', side_effect=TimeoutError()):
-            response = self.client.get('/api/films/278/')
+    def test_detail_upstream_failure_returns_502(self):
+        with mock.patch('films.movie_source.urlopen', side_effect=TimeoutError()):
+            response = self.client.get('/api/films/tt0111161/')
         self.assertEqual(response.status_code, 502)
 
     def test_detail_missing_key_returns_503(self):
-        with override_settings(TMDB_API_KEY=''):
-            response = self.client.get('/api/films/278/')
+        with override_settings(RAPIDAPI_KEY=''):
+            response = self.client.get('/api/films/tt0111161/')
         self.assertEqual(response.status_code, 503)
 
     def test_detail_responses_are_cached(self):
         calls = []
-        routes = {'/movie/278': {'id': 278, 'watch/providers': {'results': {}}}}
-        with mock.patch('films.tmdb.urlopen', side_effect=fake_tmdb(routes, calls)):
-            self.client.get('/api/films/278/')
-            self.client.get('/api/films/278/')
-        self.assertEqual(len(calls), 1)
+        routes = {
+            '/title/get-overview-details': SHAWSHANK_OVERVIEW,
+            '/title/get-full-credits': SHAWSHANK_CREDITS,
+        }
+        with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes, calls)):
+            self.client.get('/api/films/tt0111161/')
+            self.client.get('/api/films/tt0111161/')
+        self.assertEqual(len(calls), 2)
+
+    def test_detail_rejects_numeric_ids(self):
+        response = self.client.get('/api/films/278/')
+        self.assertEqual(response.status_code, 404)
 
 
 class CatalogAuthTests(APITestCase):
     def test_catalog_requires_authentication(self):
-        self.assertEqual(self.client.get('/api/films/search', {'q': 'matrix'}).status_code, 401)
-        self.assertEqual(self.client.get('/api/films/278/').status_code, 401)
+        self.assertEqual(self.client.get('/api/films/search', {'q': 'joker'}).status_code, 401)
+        self.assertEqual(self.client.get('/api/films/tt0111161/').status_code, 401)
