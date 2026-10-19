@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 *.sqlite3
 .env
+
+# Local secrets and user-uploaded media
+.env.*
+!.env.example
+media/

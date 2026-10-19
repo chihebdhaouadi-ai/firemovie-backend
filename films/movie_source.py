@@ -73,11 +73,6 @@ def _summary(row):
     }
 
 
-def _runtime_minutes(runtime):
-    seconds = (runtime or {}).get('seconds')
-    return seconds // 60 if isinstance(seconds, int) else None
-
-
 def _director(credits):
     directors = (credits.get('crew') or {}).get('director') or []
     return directors[0].get('name') if directors else None
@@ -123,16 +118,14 @@ def movie_detail(film_id):
         'film_id': film_id,
         'title': title.get('title') or '',
         'year': title.get('year'),
-        'overview': ((title.get('plot') or {}).get('plotText') or {}).get('plainText') or '',
-        'runtime': _runtime_minutes(title.get('runtime')),
-        'genres': [
-            genre['text']
-            for genre in (title.get('genres') or {}).get('genres') or []
-            if genre.get('text')
-        ],
+        'overview': (
+            (overview.get('plotSummary') or overview.get('plotOutline') or {}).get('text') or ''
+        ),
+        'runtime': title.get('runningTimeInMinutes'),
+        'genres': [genre for genre in overview.get('genres') or [] if isinstance(genre, str)],
         'director': _director(credits),
-        'poster_url': (title.get('primaryImage') or {}).get('url'),
-        'rating': (title.get('ratingsSummary') or {}).get('aggregateRating'),
+        'poster_url': (title.get('image') or {}).get('url'),
+        'rating': (overview.get('ratings') or {}).get('rating'),
     }
     cache.set(key, payload, settings.RAPIDAPI_CACHE_SECONDS)
     return payload

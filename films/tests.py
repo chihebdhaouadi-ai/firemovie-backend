@@ -249,11 +249,44 @@ class AuthenticationTests(APITestCase):
 
 
 class LegacyEndpointTests(ListApiTestCase):
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+
+    @override_settings(RAPIDAPI_KEY='')
     def test_legacy_add_and_get_keep_response_shape(self):
         response = self.client.post('/api/film/add_top_5_movies', {'imdbid': 'tt0111161'})
         self.assertEqual(response.data, {'status': 200, 'message': 'MOVIE ADD IT'})
         response = self.client.get('/api/film/get_top_5_movies')
-        self.assertEqual(response.data, {'data': [{'imdp_id': 'tt0111161'}], 'status': 200})
+        self.assertEqual(response.data, {
+            'data': [{'imdp_id': 'tt0111161', 'title': None, 'poster_url': None}],
+            'status': 200,
+        })
+
+    @override_settings(RAPIDAPI_KEY='test-key')
+    def test_legacy_lists_include_title_and_poster_from_detail(self):
+        self.client.post('/api/film/add_watchlist_movies', {'imdbid': 'tt0111161'})
+        routes = {
+            '/title/get-overview-details': SHAWSHANK_OVERVIEW,
+            '/title/get-full-credits': SHAWSHANK_CREDITS,
+        }
+        with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes)):
+            response = self.client.get('/api/film/get_watch_list_movies')
+        self.assertEqual(response.data['data'], [{
+            'imdp_id': 'tt0111161',
+            'title': 'The Shawshank Redemption',
+            'poster_url': 'https://img/p.jpg',
+        }])
+
+    @override_settings(RAPIDAPI_KEY='test-key')
+    def test_legacy_list_still_loads_when_film_source_fails(self):
+        self.client.post('/api/film/add_watched_movies', {'imdbid': 'tt0111161'})
+        with mock.patch('films.movie_source.urlopen', side_effect=URLError('down')):
+            response = self.client.get('/api/film/get_wathced_list_movies')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['data'], [
+            {'imdp_id': 'tt0111161', 'title': None, 'poster_url': None},
+        ])
 
     def test_legacy_add_missing_imdbid_is_400(self):
         response = self.client.post('/api/film/add_watched_movies', {})
@@ -324,12 +357,10 @@ SHAWSHANK_FIND = {'results': [
 
 SHAWSHANK_OVERVIEW = {'title': {
     'title': 'The Shawshank Redemption', 'year': 1994,
-    'plot': {'plotText': {'plainText': 'Hope.'}},
-    'runtime': {'seconds': 8520},
-    'genres': {'genres': [{'text': 'Drama'}]},
-    'primaryImage': {'url': 'https://img/p.jpg'},
-    'ratingsSummary': {'aggregateRating': 9.3},
-}}
+    'runningTimeInMinutes': 142,
+    'image': {'url': 'https://img/p.jpg'},
+}, 'genres': ['Drama'], 'ratings': {'rating': 9.3},
+    'plotSummary': {'text': 'Hope.'}}
 
 SHAWSHANK_CREDITS = {'crew': {'director': [{'name': 'Frank Darabont'}]}}
 
@@ -421,6 +452,8 @@ class CatalogTests(ListApiTestCase):
         self.assertEqual(response.data['genres'], ['Drama'])
         self.assertEqual(response.data['director'], 'Frank Darabont')
         self.assertEqual(response.data['rating'], 9.3)
+        self.assertEqual(response.data['overview'], 'Hope.')
+        self.assertEqual(response.data['poster_url'], 'https://img/p.jpg')
         self.assertEqual(response.data['in_lists'], [])
 
     def test_detail_for_unknown_imdb_id_is_404(self):

@@ -4,6 +4,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from .errors import ListRuleError
+from .movie_source import (
+    FilmNotFound,
+    MovieSourceNotConfigured,
+    MovieSourceUnavailable,
+    movie_detail,
+)
 from .serializers import AddFilmSerializer
 from .services import (
     TOP_5,
@@ -34,9 +40,20 @@ def _legacy_film_id(request):
     return serializer.validated_data['film_id'], None
 
 
+def _legacy_list_item(film_id):
+    item = {'imdp_id': film_id, 'title': None, 'poster_url': None}
+    try:
+        detail = movie_detail(film_id)
+    except (FilmNotFound, MovieSourceNotConfigured, MovieSourceUnavailable):
+        return item
+    item['title'] = detail['title'] or None
+    item['poster_url'] = detail['poster_url']
+    return item
+
+
 def _legacy_list(user, list_type):
     return Response({
-        'data': [{'imdp_id': film_id} for film_id in film_ids_for(user, list_type)],
+        'data': [_legacy_list_item(film_id) for film_id in film_ids_for(user, list_type)],
         'status': 200,
     })
 
