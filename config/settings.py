@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     'films',
     'reviews',
     'social',
+    'takes',
 ]
 
 MIDDLEWARE = [
