@@ -494,6 +494,18 @@ class CatalogTests(ListApiTestCase):
         response = self.client.get('/api/films/278/')
         self.assertEqual(response.status_code, 404)
 
+    def test_stills_keep_only_landscape_still_frames(self):
+        images = {'images': [
+            {'type': 'still_frame', 'url': 'https://img/s1.jpg', 'width': 640, 'height': 420},
+            {'type': 'still_frame', 'url': 'https://img/portrait.jpg', 'width': 300, 'height': 450},
+            {'type': 'poster', 'url': 'https://img/p.jpg', 'width': 1200, 'height': 1800},
+        ]}
+        routes = {'/title/get-images': images}
+        with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes)):
+            response = self.client.get('/api/films/tt0111161/stills/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['stills'], ['https://img/s1.jpg'])
+
 
 class CatalogAuthTests(APITestCase):
     def test_catalog_requires_authentication(self):

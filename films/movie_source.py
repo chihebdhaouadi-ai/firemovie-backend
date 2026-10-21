@@ -11,6 +11,7 @@ from rest_framework.exceptions import APIException
 
 IMDB_ID_PATTERN = re.compile(r'tt\d{1,10}')
 SEARCH_LIMIT = 10
+STILLS_LIMIT = 10
 
 
 class MovieSourceNotConfigured(APIException):
@@ -127,5 +128,25 @@ def movie_detail(film_id):
         'poster_url': (title.get('image') or {}).get('url'),
         'rating': (overview.get('ratings') or {}).get('rating'),
     }
+    cache.set(key, payload, settings.RAPIDAPI_CACHE_SECONDS)
+    return payload
+
+
+def film_stills(film_id):
+    key = _cache_key('stills', film_id)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+
+    data = _get('/title/get-images', {'tconst': film_id}) or {}
+    stills = [
+        image['url']
+        for image in data.get('images') or []
+        if image.get('type') == 'still_frame'
+        and image.get('url')
+        and (image.get('width') or 0) >= (image.get('height') or 0)
+    ][:STILLS_LIMIT]
+
+    payload = {'film_id': film_id, 'stills': stills}
     cache.set(key, payload, settings.RAPIDAPI_CACHE_SECONDS)
     return payload

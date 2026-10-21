@@ -4,7 +4,7 @@ from rest_framework.views import APIView
 
 from .serializers import PageParamSerializer
 from .services import lists_containing
-from .movie_source import movie_detail, search_movies
+from .movie_source import film_stills, movie_detail, search_movies
 
 MIN_QUERY_LENGTH = 2
 MAX_QUERY_LENGTH = 100
@@ -40,3 +40,8 @@ class FilmDetailView(APIView):
         payload = movie_detail(film_id)
         memberships = lists_containing(request.user, [film_id])
         return Response({**payload, 'in_lists': memberships.get(film_id, [])})
+
+
+class FilmStillsView(APIView):
+    def get(self, request, film_id):
+        return Response(film_stills(film_id))
