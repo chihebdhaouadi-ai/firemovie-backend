@@ -1,6 +1,8 @@
 from django.db import IntegrityError, transaction
-from django.db.models import Count
+from django.db.models import Count, Q
 from rest_framework import serializers
+
+from social.models import FriendRequest
 
 from .errors import TakeError
 from .models import FilmReaction, Reaction, Take, TakeComment, TakeVote, VoteKind
@@ -173,3 +175,39 @@ def comments_for_take(take):
 def create_comment(take, user, body):
     comment = TakeComment.objects.create(take=take, author=user, body=body)
     return comment_item(comment, take)
+
+
+def friend_ids(user):
+    links = (
+        FriendRequest.objects.filter(status=FriendRequest.Status.ACCEPTED)
+        .filter(Q(sender=user) | Q(receiver=user))
+        .values_list('sender_id', 'receiver_id')
+    )
+    return {receiver if sender == user.id else sender for sender, receiver in links}
+
+
+def friend_activity_for_film(film_id, viewer):
+    ids = friend_ids(viewer)
+    if not ids:
+        return []
+    reactions = list(
+        FilmReaction.objects.filter(film_id=film_id, user_id__in=ids).select_related('user')
+    )
+    takes = {
+        take.author_id: take
+        for take in Take.objects.filter(film_id=film_id, author_id__in=ids)
+    }
+    rows = []
+    for reaction in reactions:
+        take = takes.get(reaction.user_id)
+        updated_at = reaction.updated_at
+        if take is not None and take.created_at > updated_at:
+            updated_at = take.created_at
+        rows.append({
+            'user': reaction.user,
+            'reaction': reaction.reaction,
+            'take': take,
+            'updated_at': updated_at,
+        })
+    rows.sort(key=lambda row: row['updated_at'], reverse=True)
+    return rows

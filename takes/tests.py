@@ -1,6 +1,8 @@
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
+from social.models import FriendRequest
+
 from .models import FilmReaction, Take, TakeComment, TakeVote
 
 FILM = 'tt0111161'
@@ -246,3 +248,54 @@ class CommentTests(APITestCase):
         self.client.force_authenticate(self.viewer)
         response = self.client.get('/api/takes/takes/999999/comments/')
         self.assertEqual(response.status_code, 404)
+
+
+class FriendActivityTests(APITestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.viewer = User.objects.create_user(username='viewer', password='pw-123456')
+        self.ana = User.objects.create_user(username='ana', password='pw-123456')
+        self.dan = User.objects.create_user(username='dan', password='pw-123456')
+        self.ben = User.objects.create_user(username='ben', password='pw-123456')
+        self.cara = User.objects.create_user(username='cara', password='pw-123456')
+        FriendRequest.objects.create(sender=self.viewer, receiver=self.ana, status='accepted')
+        FriendRequest.objects.create(sender=self.dan, receiver=self.viewer, status='accepted')
+        FriendRequest.objects.create(sender=self.ben, receiver=self.viewer, status='pending')
+        self.url = f'/api/takes/films/{FILM}/friends/'
+        self.client.force_authenticate(self.viewer)
+
+    def test_only_accepted_friends_in_either_direction_appear(self):
+        FilmReaction.objects.create(film_id=FILM, user=self.ana, reaction='loved')
+        FilmReaction.objects.create(film_id=FILM, user=self.dan, reaction='made_laugh')
+        FilmReaction.objects.create(film_id=FILM, user=self.ben, reaction='bored')
+        FilmReaction.objects.create(film_id=FILM, user=self.cara, reaction='shocked')
+        FilmReaction.objects.create(film_id=FILM, user=self.viewer, reaction='loved')
+        data = self.client.get(self.url).json()
+        self.assertEqual(sorted(row['user']['username'] for row in data), ['ana', 'dan'])
+
+    def test_row_includes_reaction_and_take_preview(self):
+        FilmReaction.objects.create(film_id=FILM, user=self.ana, reaction='loved')
+        take = Take.objects.create(film_id=FILM, author=self.ana, reaction='loved', body='Great.')
+        data = self.client.get(self.url).json()
+        self.assertEqual(data[0]['reaction'], 'loved')
+        self.assertEqual(data[0]['take']['id'], take.id)
+        self.assertEqual(data[0]['take']['body'], 'Great.')
+        self.assertEqual(data[0]['user']['id'], self.ana.id)
+        self.assertIn('updated_at', data[0])
+
+    def test_reaction_without_take_has_null_take(self):
+        FilmReaction.objects.create(film_id=FILM, user=self.dan, reaction='made_laugh')
+        data = self.client.get(self.url).json()
+        self.assertEqual(len(data), 1)
+        self.assertIsNone(data[0]['take'])
+
+    def test_cleared_reaction_is_hidden(self):
+        FilmReaction.objects.create(film_id=FILM, user=self.ana, reaction='loved')
+        Take.objects.create(film_id=FILM, author=self.ana, reaction='loved', body='Great.')
+        FilmReaction.objects.filter(film_id=FILM, user=self.ana).delete()
+        self.assertEqual(self.client.get(self.url).json(), [])
+
+    def test_no_friends_returns_empty_list(self):
+        FriendRequest.objects.all().delete()
+        FilmReaction.objects.create(film_id=FILM, user=self.ana, reaction='loved')
+        self.assertEqual(self.client.get(self.url).json(), [])

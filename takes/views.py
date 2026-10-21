@@ -3,6 +3,8 @@ from rest_framework import serializers
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
+from social.serializers import UserCardSerializer
+
 from . import services
 from .errors import TakeError
 from .models import Take
@@ -45,6 +47,29 @@ def film_takes(request, film_id):
     serializer.is_valid(raise_exception=True)
     item = services.create_take(film_id, request.user, serializer.validated_data['body'])
     return Response(item, status=201)
+
+
+def _take_preview(take):
+    if take is None:
+        return None
+    return {
+        'id': take.id,
+        'body': take.body,
+        'created_at': serializers.DateTimeField().to_representation(take.created_at),
+    }
+
+
+@api_view(['GET'])
+def friend_activity(request, film_id):
+    return Response([
+        {
+            'user': UserCardSerializer(row['user'], context={'request': request}).data,
+            'reaction': row['reaction'],
+            'take': _take_preview(row['take']),
+            'updated_at': serializers.DateTimeField().to_representation(row['updated_at']),
+        }
+        for row in services.friend_activity_for_film(film_id, request.user)
+    ])
 
 
 @api_view(['PUT'])
