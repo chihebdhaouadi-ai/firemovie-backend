@@ -7,7 +7,7 @@ from social.serializers import UserCardSerializer
 
 from . import services
 from .errors import TakeError
-from .models import Take
+from .models import Take, TakeComment
 
 
 class TakeBodySerializer(serializers.Serializer):
@@ -16,6 +16,7 @@ class TakeBodySerializer(serializers.Serializer):
 
 class CommentBodySerializer(serializers.Serializer):
     body = serializers.CharField(max_length=300, trim_whitespace=True)
+    parent_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
 
 
 class VoteBodySerializer(serializers.Serializer):
@@ -92,5 +93,11 @@ def take_comments(request, take_id):
         return Response(services.comments_for_take(take))
     serializer = CommentBodySerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    item = services.create_comment(take, request.user, serializer.validated_data['body'])
+    parent = None
+    parent_id = serializer.validated_data.get('parent_id')
+    if parent_id is not None:
+        parent = TakeComment.objects.filter(pk=parent_id, take=take).first()
+        if parent is None:
+            raise TakeError(400, 'invalid_parent', 'That comment is no longer here.')
+    item = services.create_comment(take, request.user, serializer.validated_data['body'], parent)
     return Response(item, status=201)

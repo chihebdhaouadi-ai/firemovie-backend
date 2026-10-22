@@ -159,6 +159,7 @@ def comment_item(comment, take):
         'id': comment.id,
         'author_id': comment.author_id,
         'author_name': comment.author.username,
+        'parent_id': comment.parent_id,
         'body': comment.body,
         'created_at': serializers.DateTimeField().to_representation(comment.created_at),
         'is_writer': comment.author_id == take.author_id,
@@ -172,8 +173,8 @@ def comments_for_take(take):
     ]
 
 
-def create_comment(take, user, body):
-    comment = TakeComment.objects.create(take=take, author=user, body=body)
+def create_comment(take, user, body, parent=None):
+    comment = TakeComment.objects.create(take=take, author=user, body=body, parent=parent)
     return comment_item(comment, take)
 
 

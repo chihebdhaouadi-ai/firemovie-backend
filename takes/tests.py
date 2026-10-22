@@ -249,6 +249,35 @@ class CommentTests(APITestCase):
         response = self.client.get('/api/takes/takes/999999/comments/')
         self.assertEqual(response.status_code, 404)
 
+    def test_reply_points_at_its_parent_comment(self):
+        self.client.force_authenticate(self.viewer)
+        parent = self.client.post(self.url, {'body': 'Parent.'}, format='json').json()
+        reply = self.client.post(
+            self.url, {'body': 'Child.', 'parent_id': parent['id']}, format='json'
+        ).json()
+        self.assertEqual(reply['parent_id'], parent['id'])
+        comments = self.client.get(self.url).json()
+        self.assertIsNone(comments[0]['parent_id'])
+        self.assertEqual(comments[1]['parent_id'], parent['id'])
+
+    def test_reply_to_a_comment_on_another_take_is_rejected(self):
+        cara = get_user_model().objects.create_user(username='cara', password='pw-123456')
+        other = Take.objects.create(film_id='tt0068646', author=cara, reaction='loved', body='Other.')
+        foreign = TakeComment.objects.create(take=other, author=cara, body='Elsewhere.')
+        self.client.force_authenticate(self.viewer)
+        response = self.client.post(
+            self.url, {'body': 'Hi.', 'parent_id': foreign.id}, format='json'
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['code'], 'invalid_parent')
+        self.assertEqual(TakeComment.objects.filter(take=self.take).count(), 0)
+
+    def test_comment_without_parent_is_top_level(self):
+        self.client.force_authenticate(self.viewer)
+        response = self.client.post(self.url, {'body': 'Top.', 'parent_id': None}, format='json')
+        self.assertEqual(response.status_code, 201)
+        self.assertIsNone(response.json()['parent_id'])
+
 
 class FriendActivityTests(APITestCase):
     def setUp(self):

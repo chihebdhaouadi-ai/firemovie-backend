@@ -82,6 +82,13 @@ class TakeComment(models.Model):
         related_name='take_comments',
     )
     body = models.CharField(max_length=300)
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='replies',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
