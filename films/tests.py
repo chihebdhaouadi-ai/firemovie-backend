@@ -268,6 +268,7 @@ class LegacyEndpointTests(ListApiTestCase):
         self.client.post('/api/film/add_watchlist_movies', {'imdbid': 'tt0111161'})
         routes = {
             '/title/get-overview-details': SHAWSHANK_OVERVIEW,
+            '/gettitleDetails': {},
             '/title/get-full-credits': SHAWSHANK_CREDITS,
         }
         with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes)):
@@ -441,6 +442,7 @@ class CatalogTests(ListApiTestCase):
     def test_detail_combines_overview_and_director(self):
         routes = {
             '/title/get-overview-details': SHAWSHANK_OVERVIEW,
+            '/gettitleDetails': {},
             '/title/get-full-credits': SHAWSHANK_CREDITS,
         }
         with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes)):
@@ -483,12 +485,13 @@ class CatalogTests(ListApiTestCase):
         calls = []
         routes = {
             '/title/get-overview-details': SHAWSHANK_OVERVIEW,
+            '/gettitleDetails': {},
             '/title/get-full-credits': SHAWSHANK_CREDITS,
         }
         with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes, calls)):
             self.client.get('/api/films/tt0111161/')
             self.client.get('/api/films/tt0111161/')
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 3)
 
     def test_detail_rejects_numeric_ids(self):
         response = self.client.get('/api/films/278/')
@@ -505,6 +508,75 @@ class CatalogTests(ListApiTestCase):
             response = self.client.get('/api/films/tt0111161/stills/')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['stills'], ['https://img/s1.jpg'])
+
+
+STREAMING_OPTIONS = [
+    {'platform': 'itunes', 'url': 'https://tv.apple/x'},
+    {'platform': 'amazon', 'url': 'https://amazon/x'},
+    {'platform': 'amazon', 'url': 'https://amazon/y'},
+    {'platform': 'tubitv', 'url': 'https://tubi/x'},
+    {'platform': 'paramount', 'url': 'https://paramount/x'},
+    {'platform': '', 'url': 'https://blank/x'},
+]
+
+
+@override_settings(RAPIDAPI_KEY='test-key', STREAMING_COUNTRY='us')
+class WatchProvidersTests(ListApiTestCase):
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+
+    def detail(self, title, calls=None):
+        routes = {
+            '/title/get-overview-details': SHAWSHANK_OVERVIEW,
+            '/title/get-full-credits': SHAWSHANK_CREDITS,
+            '/gettitleDetails': title,
+        }
+        with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes, calls)):
+            return self.client.get('/api/films/tt0111161/')
+
+    def test_platforms_are_listed_once_for_region_only(self):
+        title = {'streamingAvailability': {'country': {
+            'US': STREAMING_OPTIONS,
+            'CA': [{'platform': 'hulu', 'url': 'https://hulu/x'}],
+        }}}
+        providers = self.detail(title).data['watch_providers']
+        self.assertEqual(providers, {
+            'link': None,
+            'available': [
+                {'name': 'Apple TV', 'logo_url': None},
+                {'name': 'Amazon Video', 'logo_url': None},
+                {'name': 'Tubi', 'logo_url': None},
+                {'name': 'Paramount', 'logo_url': None},
+            ],
+        })
+
+    def test_request_uses_rapidapi_key_and_host(self):
+        calls = []
+        self.detail({}, calls)
+        request = [call for call in calls if '/gettitleDetails' in call.full_url][0]
+        self.assertIn('ott-details.p.rapidapi.com/gettitleDetails?imdbid=tt0111161', request.full_url)
+        self.assertEqual(request.get_header('X-rapidapi-key'), 'test-key')
+        self.assertEqual(request.get_header('X-rapidapi-host'), 'ott-details.p.rapidapi.com')
+
+    def test_streaming_outage_still_returns_detail_with_no_providers(self):
+        response = self.detail(TimeoutError())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['title'], 'The Shawshank Redemption')
+        self.assertEqual(response.data['watch_providers']['available'], [])
+
+    def test_unknown_title_has_no_providers(self):
+        error = HTTPError('https://ott-details.p.rapidapi.com', 404, 'Not Found', None, None)
+        response = self.detail(error)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['watch_providers']['available'], [])
+
+    def test_streaming_options_are_cached(self):
+        calls = []
+        self.detail({}, calls)
+        self.detail({}, calls)
+        titles = [call for call in calls if '/gettitleDetails' in call.full_url]
+        self.assertEqual(len(titles), 1)
 
 
 class CatalogAuthTests(APITestCase):

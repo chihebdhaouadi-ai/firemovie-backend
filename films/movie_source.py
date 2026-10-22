@@ -12,6 +12,18 @@ from rest_framework.exceptions import APIException
 IMDB_ID_PATTERN = re.compile(r'tt\d{1,10}')
 SEARCH_LIMIT = 10
 STILLS_LIMIT = 10
+STREAMING_HOST = 'ott-details.p.rapidapi.com'
+STREAMING_PLATFORM_NAMES = {
+    'amazon': 'Amazon Video',
+    'directv': 'DIRECTV',
+    'hoopla': 'Hoopla',
+    'itunes': 'Apple TV',
+    'play': 'Google Play',
+    'redbox': 'Redbox',
+    'tubitv': 'Tubi',
+    'vudu': 'Vudu',
+    'youtube': 'YouTube',
+}
 
 
 class MovieSourceNotConfigured(APIException):
@@ -32,16 +44,10 @@ class FilmNotFound(APIException):
     default_detail = 'No film matches this id.'
 
 
-def _get(path, params):
-    if not settings.RAPIDAPI_KEY:
-        raise MovieSourceNotConfigured()
-    url = f'https://{settings.RAPIDAPI_HOST}{path}?{urlencode(params)}'
-    request = Request(url, headers={
-        'X-RapidAPI-Key': settings.RAPIDAPI_KEY,
-        'X-RapidAPI-Host': settings.RAPIDAPI_HOST,
-    })
+def _fetch_json(url, headers, timeout):
+    request = Request(url, headers=headers)
     try:
-        with urlopen(request, timeout=settings.RAPIDAPI_TIMEOUT_SECONDS) as response:
+        with urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode('utf-8'))
     except HTTPError as exc:
         if exc.code == 404:
@@ -49,6 +55,20 @@ def _get(path, params):
         raise MovieSourceUnavailable() from exc
     except (OSError, ValueError) as exc:
         raise MovieSourceUnavailable() from exc
+
+
+def _rapidapi_get(host, path, params):
+    if not settings.RAPIDAPI_KEY:
+        raise MovieSourceNotConfigured()
+    url = f'https://{host}{path}?{urlencode(params)}'
+    return _fetch_json(url, {
+        'X-RapidAPI-Key': settings.RAPIDAPI_KEY,
+        'X-RapidAPI-Host': host,
+    }, settings.RAPIDAPI_TIMEOUT_SECONDS)
+
+
+def _get(path, params):
+    return _rapidapi_get(settings.RAPIDAPI_HOST, path, params)
 
 
 def _cache_key(prefix, raw):
@@ -103,19 +123,14 @@ def search_movies(query, page):
     return payload
 
 
-def movie_detail(film_id):
-    key = _cache_key('detail', film_id)
-    cached = cache.get(key)
-    if cached is not None:
-        return cached
-
+def _detail_payload(film_id):
     overview = _get('/title/get-overview-details', {'tconst': film_id}) or {}
     title = overview.get('title')
     if not isinstance(title, dict):
         raise FilmNotFound()
     credits = _get('/title/get-full-credits', {'tconst': film_id}) or {}
 
-    payload = {
+    return {
         'film_id': film_id,
         'title': title.get('title') or '',
         'year': title.get('year'),
@@ -128,8 +143,50 @@ def movie_detail(film_id):
         'poster_url': (title.get('image') or {}).get('url'),
         'rating': (overview.get('ratings') or {}).get('rating'),
     }
-    cache.set(key, payload, settings.RAPIDAPI_CACHE_SECONDS)
-    return payload
+
+
+def _watch_sources(film_id):
+    key = _cache_key('streaming', film_id)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    title = _rapidapi_get(STREAMING_HOST, '/gettitleDetails', {'imdbid': film_id}) or {}
+    countries = (title.get('streamingAvailability') or {}).get('country') or {}
+    options = countries.get(settings.STREAMING_COUNTRY.upper()) or []
+    cache.set(key, options, settings.RAPIDAPI_CACHE_SECONDS)
+    return options
+
+
+def _watch_providers(film_id):
+    empty = {'link': None, 'available': []}
+    if not settings.RAPIDAPI_KEY:
+        return empty
+    try:
+        options = _watch_sources(film_id)
+    except MovieSourceUnavailable:
+        return empty
+
+    available = []
+    seen = set()
+    for option in options:
+        platform = (option.get('platform') or '').strip().lower()
+        if not platform:
+            continue
+        name = STREAMING_PLATFORM_NAMES.get(platform, platform.title())
+        if name in seen:
+            continue
+        seen.add(name)
+        available.append({'name': name, 'logo_url': None})
+    return {'link': None, 'available': available}
+
+
+def movie_detail(film_id):
+    key = _cache_key('detail', film_id)
+    payload = cache.get(key)
+    if payload is None:
+        payload = _detail_payload(film_id)
+        cache.set(key, payload, settings.RAPIDAPI_CACHE_SECONDS)
+    return {**payload, 'watch_providers': _watch_providers(film_id)}
 
 
 def film_stills(film_id):

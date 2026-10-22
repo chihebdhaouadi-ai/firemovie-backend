@@ -93,6 +93,8 @@ RAPIDAPI_HOST = 'online-movie-database.p.rapidapi.com'
 RAPIDAPI_TIMEOUT_SECONDS = 8
 RAPIDAPI_CACHE_SECONDS = 60 * 60 * 6
 
+STREAMING_COUNTRY = os.environ.get('STREAMING_COUNTRY', 'us').lower()
+
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
