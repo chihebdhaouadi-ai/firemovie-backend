@@ -12,18 +12,7 @@ from rest_framework.exceptions import APIException
 IMDB_ID_PATTERN = re.compile(r'tt\d{1,10}')
 SEARCH_LIMIT = 10
 STILLS_LIMIT = 10
-STREAMING_HOST = 'ott-details.p.rapidapi.com'
-STREAMING_PLATFORM_NAMES = {
-    'amazon': 'Amazon Video',
-    'directv': 'DIRECTV',
-    'hoopla': 'Hoopla',
-    'itunes': 'Apple TV',
-    'play': 'Google Play',
-    'redbox': 'Redbox',
-    'tubitv': 'Tubi',
-    'vudu': 'Vudu',
-    'youtube': 'YouTube',
-}
+STREAMING_HOST = 'streaming-availability.p.rapidapi.com'
 
 
 class MovieSourceNotConfigured(APIException):
@@ -150,11 +139,18 @@ def _watch_sources(film_id):
     cached = cache.get(key)
     if cached is not None:
         return cached
-    title = _rapidapi_get(STREAMING_HOST, '/gettitleDetails', {'imdbid': film_id}) or {}
-    countries = (title.get('streamingAvailability') or {}).get('country') or {}
-    options = countries.get(settings.STREAMING_COUNTRY.upper()) or []
+    show = _rapidapi_get(
+        STREAMING_HOST,
+        f'/shows/{film_id}',
+        {'country': settings.STREAMING_COUNTRY},
+    ) or {}
+    options = (show.get('streamingOptions') or {}).get(settings.STREAMING_COUNTRY) or []
     cache.set(key, options, settings.RAPIDAPI_CACHE_SECONDS)
     return options
+
+
+def _https(value):
+    return value if isinstance(value, str) and value.startswith('https://') else None
 
 
 def _watch_providers(film_id):
@@ -169,14 +165,16 @@ def _watch_providers(film_id):
     available = []
     seen = set()
     for option in options:
-        platform = (option.get('platform') or '').strip().lower()
-        if not platform:
+        service = option.get('service') or {}
+        service_id = service.get('id')
+        name = service.get('name')
+        url = _https(option.get('link'))
+        if not service_id or not name or not url or service_id in seen:
             continue
-        name = STREAMING_PLATFORM_NAMES.get(platform, platform.title())
-        if name in seen:
-            continue
-        seen.add(name)
-        available.append({'name': name, 'logo_url': None})
+        seen.add(service_id)
+        images = service.get('imageSet') or {}
+        logo = _https(images.get('darkThemeImage')) or _https(images.get('lightThemeImage'))
+        available.append({'name': name, 'logo_url': logo, 'url': url})
     return {'link': None, 'available': available}
 
 
