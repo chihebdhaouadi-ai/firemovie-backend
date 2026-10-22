@@ -26,6 +26,7 @@ def _validate_image(image):
     is_webp = header[:4] == b'RIFF' and header[8:12] == b'WEBP'
     if not (is_jpeg or is_png or is_webp):
         raise serializers.ValidationError('Upload a JPG, PNG or WebP image.')
+    image.content_type = 'image/jpeg' if is_jpeg else 'image/png' if is_png else 'image/webp'
     return image
 
 
