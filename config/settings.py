@@ -95,6 +95,9 @@ RAPIDAPI_CACHE_SECONDS = 60 * 60 * 6
 
 STREAMING_COUNTRY = os.environ.get('STREAMING_COUNTRY', 'us').lower()
 
+OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
+OPENROUTER_TRANSLATE_MODEL = os.environ.get('OPENROUTER_TRANSLATE_MODEL', 'openai/gpt-4o-mini')
+
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',

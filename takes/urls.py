@@ -9,4 +9,5 @@ urlpatterns = [
     path('films/<str:film_id>/friends/', views.friend_activity, name='takes_film_friends'),
     path('takes/<int:take_id>/votes/<str:kind>/', views.set_vote, name='takes_vote'),
     path('takes/<int:take_id>/comments/', views.take_comments, name='takes_comments'),
+    path('translate/', views.translate, name='takes_translate'),
 ]

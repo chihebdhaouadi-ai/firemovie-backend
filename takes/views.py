@@ -5,7 +5,7 @@ from rest_framework.response import Response
 
 from social.serializers import UserCardSerializer
 
-from . import services
+from . import services, translation
 from .errors import TakeError
 from .models import Take, TakeComment
 
@@ -21,6 +21,11 @@ class CommentBodySerializer(serializers.Serializer):
 
 class VoteBodySerializer(serializers.Serializer):
     active = serializers.BooleanField()
+
+
+class TranslateBodySerializer(serializers.Serializer):
+    text = serializers.CharField(max_length=400, trim_whitespace=True)
+    target_language = serializers.ChoiceField(choices=list(translation.LANGUAGE_NAMES))
 
 
 @api_view(['GET'])
@@ -101,3 +106,14 @@ def take_comments(request, take_id):
             raise TakeError(400, 'invalid_parent', 'That comment is no longer here.')
     item = services.create_comment(take, request.user, serializer.validated_data['body'], parent)
     return Response(item, status=201)
+
+
+@api_view(['POST'])
+def translate(request):
+    serializer = TranslateBodySerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    result = translation.translate(
+        serializer.validated_data['text'],
+        serializer.validated_data['target_language'],
+    )
+    return Response(result)
