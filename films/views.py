@@ -105,7 +105,7 @@ def get_watchlist_movies(request):
 @permission_classes([IsAuthenticated])
 def get_popular_movies(request):
     popular = [
-        {'imdp_id': row['film_id'], 'count': row['count']}
+        {**_legacy_list_item(row['film_id']), 'count': row['count']}
         for row in popular_watched(20)
     ]
     return Response({'data': popular, 'status': 200})

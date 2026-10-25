@@ -310,8 +310,11 @@ class LegacyEndpointTests(ListApiTestCase):
         self.client.post('/api/film/add_watched_movies', {'imdbid': 'tt1'})
         self.client.post('/api/film/add_watched_movies', {'imdbid': 'tt2'})
         response = self.client.get('/api/film/get_popular_friends_list_movies')
-        self.assertEqual(response.data['data'][0], {'imdp_id': 'tt1', 'count': 2})
-        self.assertEqual(response.data['data'][1], {'imdp_id': 'tt2', 'count': 1})
+        self.assertEqual(response.data['data'][0]['imdp_id'], 'tt1')
+        self.assertEqual(response.data['data'][0]['count'], 2)
+        self.assertEqual(response.data['data'][1]['imdp_id'], 'tt2')
+        self.assertEqual(response.data['data'][1]['count'], 1)
+        self.assertIn('poster_url', response.data['data'][0])
 
 
 class ErrorShapeTests(ListApiTestCase):
