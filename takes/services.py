@@ -93,6 +93,7 @@ def _item(take, viewer, is_most_helpful=False):
         'film_id': take.film_id,
         'author_id': take.author_id,
         'author_name': take.author.username,
+        'author_avatar': take.author.avatar.url if take.author.avatar else None,
         'is_mine': take.author_id == viewer.id,
         'reaction': take.reaction,
         'body': take.body,
