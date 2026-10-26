@@ -37,6 +37,11 @@ class RegisterSerializer(serializers.ModelSerializer):
         model = User
         fields = ('username', 'email', 'password')
 
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError('An account with this email already exists.')
+        return value
+
     def create(self, validated_data):
         user = User.objects.create_user(
             username=validated_data['username'],
@@ -51,11 +56,15 @@ class LoginSerializer(serializers.Serializer):
     password = serializers.CharField()
 
     def validate(self, data):
-        try:
-            user = User.objects.get(email=data['email'])
-        except User.DoesNotExist:
-            raise serializers.ValidationError("Invalid credentials")
-        if not user.check_password(data['password']):
+        user = next(
+            (
+                candidate
+                for candidate in User.objects.filter(email=data['email'])
+                if candidate.check_password(data['password'])
+            ),
+            None,
+        )
+        if user is None:
             raise serializers.ValidationError("Invalid credentials")
         data['user'] = user
         return data
