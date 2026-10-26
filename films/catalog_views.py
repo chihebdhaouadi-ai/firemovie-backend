@@ -2,9 +2,10 @@ from rest_framework.exceptions import APIException
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .catalog import film_detail
 from .serializers import PageParamSerializer
 from .services import lists_containing
-from .movie_source import film_stills, movie_detail, search_movies
+from .movie_source import film_stills, search_movies
 
 MIN_QUERY_LENGTH = 2
 MAX_QUERY_LENGTH = 100
@@ -37,7 +38,7 @@ class FilmSearchView(APIView):
 
 class FilmDetailView(APIView):
     def get(self, request, film_id):
-        payload = movie_detail(film_id)
+        payload = film_detail(film_id)
         memberships = lists_containing(request.user, [film_id])
         return Response({**payload, 'in_lists': memberships.get(film_id, [])})
 

@@ -112,7 +112,7 @@ def search_movies(query, page):
     return payload
 
 
-def _detail_payload(film_id):
+def fetch_film_detail(film_id):
     overview = _get('/title/get-overview-details', {'tconst': film_id}) or {}
     title = overview.get('title')
     if not isinstance(title, dict):
@@ -153,7 +153,7 @@ def _https(value):
     return value if isinstance(value, str) and value.startswith('https://') else None
 
 
-def _watch_providers(film_id):
+def watch_providers(film_id):
     empty = {'link': None, 'available': []}
     if not settings.RAPIDAPI_KEY:
         return empty
@@ -176,15 +176,6 @@ def _watch_providers(film_id):
         logo = _https(images.get('darkThemeImage')) or _https(images.get('lightThemeImage'))
         available.append({'name': name, 'logo_url': logo, 'url': url})
     return {'link': None, 'available': available}
-
-
-def movie_detail(film_id):
-    key = _cache_key('detail', film_id)
-    payload = cache.get(key)
-    if payload is None:
-        payload = _detail_payload(film_id)
-        cache.set(key, payload, settings.RAPIDAPI_CACHE_SECONDS)
-    return {**payload, 'watch_providers': _watch_providers(film_id)}
 
 
 def film_stills(film_id):

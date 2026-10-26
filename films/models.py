@@ -5,6 +5,25 @@ from django.db.models import CheckConstraint, Q, UniqueConstraint
 TOP5_SIZE = 5
 
 
+class Film(models.Model):
+    imdb_id = models.CharField(max_length=20, unique=True)
+    title = models.CharField(max_length=300, blank=True)
+    year = models.PositiveSmallIntegerField(null=True, blank=True)
+    overview = models.TextField(blank=True)
+    runtime = models.PositiveIntegerField(null=True, blank=True)
+    genres = models.JSONField(default=list, blank=True)
+    director = models.CharField(max_length=200, null=True, blank=True)
+    poster_url = models.CharField(max_length=500, null=True, blank=True)
+    rating = models.FloatField(null=True, blank=True)
+    fetched_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'films'
+
+    def __str__(self):
+        return f'{self.imdb_id} {self.title}'
+
+
 class FilmEntry(models.Model):
     class ListType(models.TextChoices):
         TOP_5 = 'top_5', 'Top 5'

@@ -8,7 +8,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
 from accounts.models import User
-from films.models import FilmEntry
+from films.models import Film, FilmEntry
 
 TOP5 = 'top5'
 WATCHED = 'watched'
@@ -595,3 +595,66 @@ class CatalogAuthTests(APITestCase):
     def test_catalog_requires_authentication(self):
         self.assertEqual(self.client.get('/api/films/search', {'q': 'joker'}).status_code, 401)
         self.assertEqual(self.client.get('/api/films/tt0111161/').status_code, 401)
+
+
+@override_settings(RAPIDAPI_KEY='test-key')
+class FilmRecordTests(ListApiTestCase):
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+        self.routes = {
+            '/title/get-overview-details': SHAWSHANK_OVERVIEW,
+            '/title/get-full-credits': SHAWSHANK_CREDITS,
+            '/shows/': {},
+        }
+
+    def upstream(self, calls=None):
+        return mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(self.routes, calls))
+
+    def test_detail_is_saved_and_read_back_without_film_upstream_calls(self):
+        with self.upstream():
+            self.client.get('/api/films/tt0111161/')
+        cache.clear()
+        calls = []
+        with self.upstream(calls):
+            response = self.client.get('/api/films/tt0111161/')
+        self.assertEqual(response.data['title'], 'The Shawshank Redemption')
+        self.assertTrue(all('/shows/' in call.full_url for call in calls))
+        film = Film.objects.get(imdb_id='tt0111161')
+        self.assertEqual(film.title, 'The Shawshank Redemption')
+        self.assertEqual(film.director, 'Frank Darabont')
+        self.assertEqual(film.genres, ['Drama'])
+
+    def test_take_saves_film_record(self):
+        self.client.put('/api/takes/films/tt0111161/reaction/', {'reaction': 'loved'}, format='json')
+        with self.upstream():
+            response = self.client.post(
+                '/api/takes/films/tt0111161/takes/', {'body': 'Great'}, format='json',
+            )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(Film.objects.get(imdb_id='tt0111161').title, 'The Shawshank Redemption')
+
+    def test_take_is_created_when_film_source_is_down(self):
+        self.client.put('/api/takes/films/tt0111161/reaction/', {'reaction': 'loved'}, format='json')
+        with mock.patch('films.movie_source.urlopen', side_effect=URLError('down')):
+            response = self.client.post(
+                '/api/takes/films/tt0111161/takes/', {'body': 'Great'}, format='json',
+            )
+        self.assertEqual(response.status_code, 201)
+        self.assertFalse(Film.objects.exists())
+
+    def test_review_saves_film_record(self):
+        with self.upstream():
+            response = self.client.post(
+                '/api/review/add_review', {'imdb_id': 'tt0111161', 'rating': 5, 'body': 'Great'},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Film.objects.get(imdb_id='tt0111161').title, 'The Shawshank Redemption')
+
+    def test_review_with_malformed_imdb_id_does_not_call_film_source(self):
+        with mock.patch('films.movie_source.urlopen') as opener:
+            response = self.client.post(
+                '/api/review/add_review', {'imdb_id': 'not-an-id', 'rating': 3},
+            )
+        self.assertEqual(response.status_code, 200)
+        opener.assert_not_called()

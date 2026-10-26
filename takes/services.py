@@ -2,6 +2,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Count, Q
 from rest_framework import serializers
 
+from films.catalog import try_stored_film
 from social.models import FriendRequest
 
 from .errors import TakeError
@@ -145,6 +146,7 @@ def create_take(film_id, user, body):
             take = Take.objects.create(film_id=film_id, author=user, reaction=reaction, body=body)
     except IntegrityError:
         raise TakeError(409, 'already_posted', 'You already shared a take for this film.')
+    try_stored_film(film_id)
     return _item(take, user)
 
 

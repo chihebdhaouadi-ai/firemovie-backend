@@ -2,6 +2,7 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from films.catalog import try_stored_film
 from .models import Review
 from .serializers import ReviewSerializer
 
@@ -55,6 +56,7 @@ def add_review(request):
         writer_name=request.user.username,
         writer_image='',
     )
+    try_stored_film(imdb_id)
 
     return Response({
         'status': 200,

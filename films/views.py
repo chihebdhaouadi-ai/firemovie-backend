@@ -3,13 +3,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from .catalog import try_stored_film
 from .errors import ListRuleError
-from .movie_source import (
-    FilmNotFound,
-    MovieSourceNotConfigured,
-    MovieSourceUnavailable,
-    movie_detail,
-)
 from .serializers import AddFilmSerializer
 from .services import (
     TOP_5,
@@ -41,14 +36,12 @@ def _legacy_film_id(request):
 
 
 def _legacy_list_item(film_id):
-    item = {'imdp_id': film_id, 'title': None, 'poster_url': None}
-    try:
-        detail = movie_detail(film_id)
-    except (FilmNotFound, MovieSourceNotConfigured, MovieSourceUnavailable):
-        return item
-    item['title'] = detail['title'] or None
-    item['poster_url'] = detail['poster_url']
-    return item
+    film = try_stored_film(film_id)
+    return {
+        'imdp_id': film_id,
+        'title': (film.title or None) if film else None,
+        'poster_url': film.poster_url if film else None,
+    }
 
 
 def _legacy_list(user, list_type):
