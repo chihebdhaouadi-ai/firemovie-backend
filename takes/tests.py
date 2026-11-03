@@ -328,3 +328,55 @@ class FriendActivityTests(APITestCase):
         FriendRequest.objects.all().delete()
         FilmReaction.objects.create(film_id=FILM, user=self.ana, reaction='loved')
         self.assertEqual(self.client.get(self.url).json(), [])
+
+
+class TopicTests(APITestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.viewer = User.objects.create_user(username='viewer', password='pw-123456')
+        self.ana = User.objects.create_user(username='ana', password='pw-123456')
+        self.client.force_authenticate(self.viewer)
+
+    def post(self, body, tag=None, film=FILM):
+        payload = {'body': body}
+        if tag is not None:
+            payload['tag'] = tag
+        return self.client.post(f'/api/takes/films/{film}/takes/', payload, format='json')
+
+    def test_question_needs_no_reaction(self):
+        response = self.post('Who shot the cafe scene?', 'question')
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()['tag'], 'question')
+        self.assertIsNone(response.json()['reaction'])
+
+    def test_review_still_requires_a_reaction(self):
+        response = self.post('Great film.', 'review')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['code'], 'reaction_required')
+
+    def test_topics_do_not_block_a_review_on_the_same_film(self):
+        self.post('A question', 'question')
+        self.post('A discussion', 'discussion')
+        FilmReaction.objects.create(film_id=FILM, user=self.viewer, reaction='loved')
+        response = self.post('My review', 'review')
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(self.post('Another review', 'review').status_code, 409)
+
+    def test_reaction_change_leaves_topics_untouched(self):
+        self.post('A question', 'question')
+        FilmReaction.objects.create(film_id=FILM, user=self.viewer, reaction='loved')
+        self.post('My review', 'review')
+        self.client.put(f'/api/takes/films/{FILM}/reaction/', {'reaction': 'bored'}, format='json')
+        topic = Take.objects.get(author=self.viewer, tag='question')
+        self.assertIsNone(topic.reaction)
+        self.assertEqual(Take.objects.get(author=self.viewer, tag='review').reaction, 'bored')
+
+    def test_explore_lists_topics_from_any_film_newest_first(self):
+        self.client.logout()
+        self.client.force_authenticate(self.ana)
+        self.post('Old discussion', 'discussion', film='tt0000001')
+        self.post('Newest question', 'question', film='tt0000002')
+        feed = self.client.get('/api/takes/explore/').json()
+        self.assertEqual([item['body'] for item in feed], ['Newest question', 'Old discussion'])
+        self.assertEqual(feed[0]['film']['film_id'], 'tt0000002')
+        self.assertEqual(feed[0]['tag'], 'question')

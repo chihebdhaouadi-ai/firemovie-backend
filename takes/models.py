@@ -16,6 +16,12 @@ class Reaction(models.TextChoices):
     MASTERPIECE = 'masterpiece', 'Masterpiece'
 
 
+class Tag(models.TextChoices):
+    REVIEW = 'review', 'Review'
+    QUESTION = 'question', 'Question'
+    DISCUSSION = 'discussion', 'Discussion'
+
+
 class VoteKind(models.TextChoices):
     CHANGED_MY_MIND = 'changed_my_mind', 'Changed my mind'
     WELL_ARGUED = 'well_argued', 'Well argued'
@@ -46,14 +52,21 @@ class Take(models.Model):
         on_delete=models.CASCADE,
         related_name='takes',
     )
-    reaction = models.CharField(max_length=16, choices=Reaction.choices)
+    reaction = models.CharField(max_length=16, choices=Reaction.choices, null=True, blank=True)
+    tag = models.CharField(max_length=16, choices=Tag.choices, default=Tag.REVIEW)
     body = models.TextField(max_length=280)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = 'takes'
         constraints = [
-            UniqueConstraint(fields=['film_id', 'author'], name='take_unique_per_author'),
+            # Only reviews are limited to one per author per film; questions and
+            # discussions can be posted freely.
+            UniqueConstraint(
+                fields=['film_id', 'author'],
+                condition=Q(tag='review'),
+                name='take_unique_per_author',
+            ),
         ]
 
 

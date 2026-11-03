@@ -7,11 +7,12 @@ from social.serializers import UserCardSerializer
 
 from . import services, translation
 from .errors import TakeError
-from .models import Take, TakeComment
+from .models import Tag, Take, TakeComment
 
 
 class TakeBodySerializer(serializers.Serializer):
     body = serializers.CharField(max_length=280, trim_whitespace=True)
+    tag = serializers.ChoiceField(choices=Tag.choices, default=Tag.REVIEW)
 
 
 class CommentBodySerializer(serializers.Serializer):
@@ -51,8 +52,18 @@ def film_takes(request, film_id):
         return Response(services.takes_for_film(film_id, request.user))
     serializer = TakeBodySerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    item = services.create_take(film_id, request.user, serializer.validated_data['body'])
+    item = services.create_take(
+        film_id,
+        request.user,
+        serializer.validated_data['body'],
+        serializer.validated_data['tag'],
+    )
     return Response(item, status=201)
+
+
+@api_view(['GET'])
+def explore_takes(request):
+    return Response(services.explore_feed(request.user))
 
 
 def _take_preview(take):

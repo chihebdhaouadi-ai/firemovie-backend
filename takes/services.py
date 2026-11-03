@@ -6,10 +6,14 @@ from films.catalog import try_stored_film
 from social.models import FriendRequest
 
 from .errors import TakeError
-from .models import FilmReaction, Reaction, Take, TakeComment, TakeVote, VoteKind
+from films.models import Film
+
+from .models import FilmReaction, Reaction, Tag, Take, TakeComment, TakeVote, VoteKind
 
 REACTION_KEYS = [choice.value for choice in Reaction]
 VOTE_KINDS = [choice.value for choice in VoteKind]
+TAG_KEYS = [choice.value for choice in Tag]
+EXPLORE_LIMIT = 30
 POSITIVE = {'loved', 'blew_mind', 'made_think', 'made_laugh', 'masterpiece'}
 NEGATIVE = {'broke_heart', 'bored', 'disappointed'}
 MAX_WELL_ARGUED_BONUS = 10
@@ -76,7 +80,7 @@ def set_reaction(film_id, user, reaction):
         FilmReaction.objects.update_or_create(
             film_id=film_id, user=user, defaults={'reaction': reaction}
         )
-        Take.objects.filter(film_id=film_id, author=user).update(reaction=reaction)
+        Take.objects.filter(film_id=film_id, author=user, tag=Tag.REVIEW).update(reaction=reaction)
 
 
 def _item(take, viewer, is_most_helpful=False):
@@ -97,6 +101,7 @@ def _item(take, viewer, is_most_helpful=False):
         'author_avatar': take.author.avatar.url if take.author.avatar else None,
         'is_mine': take.author_id == viewer.id,
         'reaction': take.reaction,
+        'tag': take.tag,
         'body': take.body,
         'created_at': serializers.DateTimeField().to_representation(take.created_at),
         'votes': counts,
@@ -131,19 +136,23 @@ def take_item(take, viewer):
     return next(item for item in takes_for_film(take.film_id, viewer) if item['id'] == take.id)
 
 
-def create_take(film_id, user, body):
-    reaction = (
-        FilmReaction.objects.filter(film_id=film_id, user=user)
-        .values_list('reaction', flat=True)
-        .first()
-    )
-    if reaction is None:
-        raise TakeError(400, 'reaction_required', 'Pick a reaction before sharing a take.')
-    if Take.objects.filter(film_id=film_id, author=user).exists():
-        raise TakeError(409, 'already_posted', 'You already shared a take for this film.')
+def create_take(film_id, user, body, tag=Tag.REVIEW):
+    reaction = None
+    if tag == Tag.REVIEW:
+        reaction = (
+            FilmReaction.objects.filter(film_id=film_id, user=user)
+            .values_list('reaction', flat=True)
+            .first()
+        )
+        if reaction is None:
+            raise TakeError(400, 'reaction_required', 'Pick a reaction before sharing a take.')
+        if Take.objects.filter(film_id=film_id, author=user, tag=Tag.REVIEW).exists():
+            raise TakeError(409, 'already_posted', 'You already shared a take for this film.')
     try:
         with transaction.atomic():
-            take = Take.objects.create(film_id=film_id, author=user, reaction=reaction, body=body)
+            take = Take.objects.create(
+                film_id=film_id, author=user, reaction=reaction, tag=tag, body=body
+            )
     except IntegrityError:
         raise TakeError(409, 'already_posted', 'You already shared a take for this film.')
     try_stored_film(film_id)
@@ -199,7 +208,7 @@ def friend_activity_for_film(film_id, viewer):
     )
     takes = {
         take.author_id: take
-        for take in Take.objects.filter(film_id=film_id, author_id__in=ids)
+        for take in Take.objects.filter(film_id=film_id, author_id__in=ids, tag=Tag.REVIEW)
     }
     rows = []
     for reaction in reactions:
@@ -215,3 +224,28 @@ def friend_activity_for_film(film_id, viewer):
         })
     rows.sort(key=lambda row: row['updated_at'], reverse=True)
     return rows
+
+
+def explore_feed(viewer, limit=EXPLORE_LIMIT):
+    """Newest takes, questions and discussions across every film."""
+    takes = list(
+        Take.objects.select_related('author')
+        .prefetch_related('votes')
+        .annotate(comment_total=Count('comments'))
+        .order_by('-created_at', '-id')[:limit]
+    )
+    films = {
+        film.imdb_id: film
+        for film in Film.objects.filter(imdb_id__in={take.film_id for take in takes})
+    }
+    items = []
+    for take in takes:
+        film = films.get(take.film_id)
+        item = _item(take, viewer)
+        item['film'] = {
+            'film_id': take.film_id,
+            'title': (film.title or None) if film else None,
+            'poster_url': film.poster_url if film else None,
+        }
+        items.append(item)
+    return items
