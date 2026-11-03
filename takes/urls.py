@@ -5,6 +5,7 @@ from . import views
 urlpatterns = [
     path('topics/', views.create_topic, name='takes_create_topic'),
     path('explore/', views.explore_takes, name='takes_explore'),
+    path('topics/trending/', views.trending_topics, name='takes_trending_topics'),
     path('films/<str:film_id>/summary/', views.film_summary, name='takes_film_summary'),
     path('films/<str:film_id>/reaction/', views.set_reaction, name='takes_film_reaction'),
     path('films/<str:film_id>/takes/', views.film_takes, name='takes_film_takes'),

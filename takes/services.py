@@ -1,5 +1,8 @@
+from datetime import timedelta
+
 from django.db import IntegrityError, transaction
-from django.db.models import Count, Q
+from django.db.models import Count, F, Q
+from django.utils import timezone
 from rest_framework import serializers
 
 from films.catalog import try_stored_film
@@ -14,6 +17,8 @@ REACTION_KEYS = [choice.value for choice in Reaction]
 VOTE_KINDS = [choice.value for choice in VoteKind]
 TAG_KEYS = [choice.value for choice in Tag]
 EXPLORE_LIMIT = 30
+TRENDING_LIMIT = 10
+TRENDING_WINDOW = timedelta(days=7)
 POSITIVE = {'loved', 'blew_mind', 'made_think', 'made_laugh', 'masterpiece'}
 NEGATIVE = {'broke_heart', 'bored', 'disappointed'}
 MAX_WELL_ARGUED_BONUS = 10
@@ -242,14 +247,7 @@ def create_topic(user, body, tag, film_id='', image=None):
     return _item(take, user)
 
 
-def explore_feed(viewer, limit=EXPLORE_LIMIT):
-    """Newest takes, questions and discussions across every film."""
-    takes = list(
-        Take.objects.select_related('author')
-        .prefetch_related('votes')
-        .annotate(comment_total=Count('comments'))
-        .order_by('-created_at', '-id')[:limit]
-    )
+def _feed_items(takes, viewer):
     films = {
         film.imdb_id: film
         for film in Film.objects.filter(imdb_id__in={take.film_id for take in takes})
@@ -265,3 +263,31 @@ def explore_feed(viewer, limit=EXPLORE_LIMIT):
         }
         items.append(item)
     return items
+
+
+def explore_feed(viewer, limit=EXPLORE_LIMIT):
+    """Newest takes, questions and discussions across every film."""
+    takes = list(
+        Take.objects.select_related('author')
+        .prefetch_related('votes')
+        .annotate(comment_total=Count('comments'))
+        .order_by('-created_at', '-id')[:limit]
+    )
+    return _feed_items(takes, viewer)
+
+
+def trending_topics(viewer, limit=TRENDING_LIMIT):
+    """Questions and discussions from the last week, ranked by replies and votes."""
+    since = timezone.now() - TRENDING_WINDOW
+    takes = list(
+        Take.objects.select_related('author')
+        .prefetch_related('votes')
+        .filter(tag__in=[Tag.QUESTION, Tag.DISCUSSION], created_at__gte=since)
+        .annotate(
+            comment_total=Count('comments', distinct=True),
+            vote_total=Count('votes', distinct=True),
+        )
+        .annotate(engagement=F('comment_total') * 2 + F('vote_total'))
+        .order_by('-engagement', '-created_at', '-id')[:limit]
+    )
+    return _feed_items(takes, viewer)

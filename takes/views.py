@@ -119,6 +119,11 @@ def explore_takes(request):
     return Response(services.explore_feed(request.user))
 
 
+@api_view(['GET'])
+def trending_topics(request):
+    return Response(services.trending_topics(request.user))
+
+
 def _take_preview(take):
     if take is None:
         return None

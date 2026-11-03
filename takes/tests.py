@@ -1,6 +1,8 @@
 import tempfile
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from rest_framework.test import APITestCase
@@ -384,6 +386,28 @@ class TopicTests(APITestCase):
         self.assertEqual([item['body'] for item in feed], ['Newest question', 'Old discussion'])
         self.assertEqual(feed[0]['film']['film_id'], 'tt0000002')
         self.assertEqual(feed[0]['tag'], 'question')
+
+
+    def test_trending_ranks_recent_topics_by_replies_and_votes(self):
+        self.post('Quiet question', 'question', film='tt0000001')
+        self.post('Busy discussion', 'discussion', film='tt0000002')
+        busy = Take.objects.get(body='Busy discussion')
+        TakeComment.objects.create(take=busy, author=self.ana, body='Agreed')
+        TakeVote.objects.create(take=busy, user=self.ana, kind='well_argued')
+        feed = self.client.get('/api/takes/topics/trending/').json()
+        self.assertEqual([item['body'] for item in feed], ['Busy discussion', 'Quiet question'])
+        self.assertEqual(feed[0]['comment_count'], 1)
+
+    def test_trending_skips_reviews_and_topics_older_than_a_week(self):
+        FilmReaction.objects.create(film_id=FILM, user=self.viewer, reaction='loved')
+        self.post('My review', 'review')
+        self.post('Stale question', 'question')
+        Take.objects.filter(body='Stale question').update(
+            created_at=timezone.now() - timedelta(days=8)
+        )
+        self.post('Fresh question', 'question')
+        feed = self.client.get('/api/takes/topics/trending/').json()
+        self.assertEqual([item['body'] for item in feed], ['Fresh question'])
 
 
 @override_settings(MEDIA_ROOT=tempfile.mkdtemp())
