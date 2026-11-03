@@ -103,6 +103,7 @@ def _item(take, viewer, is_most_helpful=False):
         'reaction': take.reaction,
         'tag': take.tag,
         'body': take.body,
+        'image_url': take.image.url if take.image else None,
         'created_at': serializers.DateTimeField().to_representation(take.created_at),
         'votes': counts,
         'my_votes': my_votes,
@@ -224,6 +225,21 @@ def friend_activity_for_film(film_id, viewer):
         })
     rows.sort(key=lambda row: row['updated_at'], reverse=True)
     return rows
+
+
+def create_topic(user, body, tag, film_id='', image=None):
+    """A question or discussion, optionally about a film and/or with a photo."""
+    try:
+        with transaction.atomic():
+            take = Take.objects.create(
+                film_id=film_id or '', author=user, reaction=None, tag=tag,
+                body=body, image=image or None,
+            )
+    except IntegrityError:
+        raise TakeError(409, 'already_posted', 'Could not save your topic.')
+    if film_id:
+        try_stored_film(film_id)
+    return _item(take, user)
 
 
 def explore_feed(viewer, limit=EXPLORE_LIMIT):

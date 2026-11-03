@@ -15,6 +15,33 @@ class TakeBodySerializer(serializers.Serializer):
     tag = serializers.ChoiceField(choices=Tag.choices, default=Tag.REVIEW)
 
 
+MAX_TOPIC_IMAGE_BYTES = 5 * 1024 * 1024
+TOPIC_IMAGE_TYPES = {'image/jpeg', 'image/png', 'image/webp'}
+
+
+class TopicSerializer(serializers.Serializer):
+    body = serializers.CharField(max_length=280, trim_whitespace=True)
+    tag = serializers.ChoiceField(choices=[Tag.QUESTION, Tag.DISCUSSION])
+    film_id = serializers.CharField(max_length=20, required=False, allow_blank=True, default='')
+    image = serializers.FileField(required=False, allow_null=True, default=None)
+
+    def validate_image(self, image):
+        if image is None:
+            return None
+        if image.content_type not in TOPIC_IMAGE_TYPES:
+            raise serializers.ValidationError('Use a JPEG, PNG or WebP photo.', code='invalid_image')
+        if image.size > MAX_TOPIC_IMAGE_BYTES:
+            raise serializers.ValidationError('Photos must be 5 MB or smaller.', code='image_too_large')
+        return image
+
+    def validate(self, data):
+        if not data['film_id'] and data.get('image') is None:
+            raise serializers.ValidationError(
+                'Choose a movie or add a photo to your topic.', code='topic_needs_subject'
+            )
+        return data
+
+
 class CommentBodySerializer(serializers.Serializer):
     body = serializers.CharField(max_length=300, trim_whitespace=True)
     parent_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
@@ -57,6 +84,32 @@ def film_takes(request, film_id):
         request.user,
         serializer.validated_data['body'],
         serializer.validated_data['tag'],
+    )
+    return Response(item, status=201)
+
+
+def _first_error(errors):
+    """Flatten serializer errors into the TakeError shape the apps read."""
+    for value in errors.values():
+        detail = value[0] if isinstance(value, list) else value
+        message = detail.get('message') if isinstance(detail, dict) else detail
+        code = getattr(detail, 'code', 'invalid')
+        return TakeError(400, code, str(message))
+    return TakeError(400, 'invalid', 'Check your topic and try again.')
+
+
+@api_view(['POST'])
+def create_topic(request):
+    serializer = TopicSerializer(data=request.data)
+    if not serializer.is_valid():
+        raise _first_error(serializer.errors)
+    data = serializer.validated_data
+    item = services.create_topic(
+        request.user,
+        data['body'],
+        data['tag'],
+        film_id=data['film_id'],
+        image=data.get('image'),
     )
     return Response(item, status=201)
 

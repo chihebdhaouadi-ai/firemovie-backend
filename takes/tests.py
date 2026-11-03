@@ -1,4 +1,8 @@
+import tempfile
+
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from social.models import FriendRequest
@@ -380,3 +384,60 @@ class TopicTests(APITestCase):
         self.assertEqual([item['body'] for item in feed], ['Newest question', 'Old discussion'])
         self.assertEqual(feed[0]['film']['film_id'], 'tt0000002')
         self.assertEqual(feed[0]['tag'], 'question')
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp())
+class TopicCreateTests(APITestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.viewer = User.objects.create_user(username='viewer', password='pw-123456')
+        self.client.force_authenticate(self.viewer)
+
+    def photo(self, name='pic.png', content_type='image/png', size=1024):
+        return SimpleUploadedFile(name, b'x' * size, content_type=content_type)
+
+    def post(self, **data):
+        return self.client.post('/api/takes/topics/', data, format='multipart')
+
+    def test_question_about_a_movie_has_no_reaction(self):
+        response = self.post(body='Who shot the cafe scene?', tag='question', film_id=FILM)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()['film_id'], FILM)
+        self.assertEqual(response.json()['tag'], 'question')
+        self.assertIsNone(response.json()['reaction'])
+        self.assertIsNone(response.json()['image_url'])
+
+    def test_photo_topic_needs_no_movie(self):
+        response = self.post(body='Spot the location?', tag='discussion', image=self.photo())
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()['film_id'], '')
+        self.assertIn('takes/', response.json()['image_url'])
+        self.assertEqual(Take.objects.get().tag, 'discussion')
+
+    def test_topic_needs_a_movie_or_a_photo(self):
+        response = self.post(body='Just words', tag='question')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['code'], 'topic_needs_subject')
+        self.assertFalse(Take.objects.exists())
+
+    def test_reviews_cannot_use_the_topic_endpoint(self):
+        response = self.post(body='Great film', tag='review', film_id=FILM)
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Take.objects.exists())
+
+    def test_rejects_non_image_files(self):
+        response = self.post(body='Look', tag='question', image=self.photo('x.gif', 'image/gif'))
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Take.objects.exists())
+
+    def test_rejects_photos_over_five_megabytes(self):
+        big = self.photo(size=5 * 1024 * 1024 + 1)
+        response = self.post(body='Look', tag='question', image=big)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['code'], 'image_too_large')
+
+    def test_photo_topics_appear_in_explore(self):
+        self.post(body='Photo question', tag='question', image=self.photo())
+        feed = self.client.get('/api/takes/explore/').json()
+        self.assertEqual(feed[0]['body'], 'Photo question')
+        self.assertIsNone(feed[0]['film']['film_id'] or None)

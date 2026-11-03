@@ -46,7 +46,8 @@ class FilmReaction(models.Model):
 
 
 class Take(models.Model):
-    film_id = models.CharField(max_length=20, db_index=True)
+    # Blank for photo topics that are not about a specific film.
+    film_id = models.CharField(max_length=20, db_index=True, blank=True)
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -55,6 +56,7 @@ class Take(models.Model):
     reaction = models.CharField(max_length=16, choices=Reaction.choices, null=True, blank=True)
     tag = models.CharField(max_length=16, choices=Tag.choices, default=Tag.REVIEW)
     body = models.TextField(max_length=280)
+    image = models.FileField(upload_to='takes/', blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
