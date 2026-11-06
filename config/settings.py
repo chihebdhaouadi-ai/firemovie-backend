@@ -37,7 +37,11 @@ INSTALLED_APPS = [
     'reviews',
     'social',
     'takes',
+    'landing',
 ]
+
+# Where the landing page's "Join" buttons send visitors (the FilmSage web app).
+FILMSAGE_APP_URL = os.environ.get('FILMSAGE_APP_URL', 'https://firemovies-d3c6b.web.app')
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
