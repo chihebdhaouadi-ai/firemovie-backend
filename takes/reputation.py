@@ -150,8 +150,11 @@ def _badge(key, current, target):
     return {'key': key, 'current': current, 'target': target, 'unlocked': current >= target}
 
 
-def _frame(key, current, target):
-    return {'key': key, 'current': current, 'target': target, 'unlocked': current >= target}
+def _frame(key, current, target, available=True):
+    frame = {'key': key, 'current': current, 'target': target, 'unlocked': available and current >= target}
+    if not available:
+        frame['available'] = False  # only sent when the server cannot track it yet
+    return frame
 
 
 def progress_for(user):
@@ -201,12 +204,14 @@ def progress_for(user):
             _badge('top_critic', 1 if top_critic else 0, 1),
             _badge('first_take', first_takes, 1),
         ],
+        # Everyone starts at level 1 with the Newcomer frame. Every other frame
+        # is earned through an achievement or badge, never through level.
         'frames': [
             _frame('bronze', 0, 0),
-            _frame('explorer', level, 10),
-            _frame('debater', well_argued, 50),
-            _frame('gold', level, 15),
-            _frame('legend', level, 30),
+            _frame('explorer', reviews, 10),  # film_critic achievement
+            _frame('debater', well_argued, 50),  # debater achievement
+            _frame('gold', 1 if top_critic else 0, 1),  # top_critic badge
+            _frame('legend', 0, 20, available=False),  # local_cinema achievement
         ],
     }
 

@@ -272,7 +272,8 @@ class ProgressTests(TestCase):
         debater = next(f for f in progress['frames'] if f['key'] == 'debater')
         explorer = next(f for f in progress['frames'] if f['key'] == 'explorer')
         self.assertEqual(debater, {'key': 'debater', 'current': 50, 'target': 50, 'unlocked': True})
-        self.assertFalse(explorer['unlocked'])
+        # Explorer follows the film_critic achievement (10 reviews), not level.
+        self.assertEqual(explorer, {'key': 'explorer', 'current': 50, 'target': 10, 'unlocked': True})
         self.assertEqual(progress['badges'][0]['current'], 50)
 
     def test_bronze_frame_is_always_unlocked(self):
