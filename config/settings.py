@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     'social',
     'takes',
     'landing',
+    'articles',
 ]
 
 # Where the landing page's "Join" buttons send visitors (the FilmSage web app).

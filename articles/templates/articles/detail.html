@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ article.title }} · FilmSage</title>
+  <meta name="description" content="{{ article.title }}">
+  <meta property="og:title" content="{{ article.title }}">
+  <meta property="og:image" content="{{ article.cover.url }}">
+  <meta name="color-scheme" content="dark">
+  <style>
+    :root { --bg: #151515; --text: #f2f2f2; --muted: #a7a7a7; --accent: #f5c542; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    .wrap { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
+    .back { color: var(--accent); text-decoration: none; font-size: 14px; }
+    .cover { display: block; width: 100%; height: auto; max-height: 520px; object-fit: cover; border-radius: 12px; margin: 16px 0 24px; }
+    h1 { font-size: clamp(26px, 5vw, 40px); line-height: 1.15; margin: 0 0 8px; }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+    .article { width: 100%; height: 75vh; min-height: 480px; border: 0; border-radius: 12px; background: #fff; }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <a class="back" href="/">← FilmSage</a>
+    {% if article.cover %}
+      <img class="cover" src="{{ article.cover.url }}" alt="">
+    {% endif %}
+    <h1>{{ article.title }}</h1>
+    <p class="meta">{{ article.published_at|date:"j F Y" }}</p>
+    <iframe class="article" src="{{ body_url }}" title="{{ article.title }}" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"></iframe>
+  </main>
+</body>
+</html>
