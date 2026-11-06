@@ -658,3 +658,94 @@ class FilmRecordTests(ListApiTestCase):
             )
         self.assertEqual(response.status_code, 200)
         opener.assert_not_called()
+
+
+class PopularThisWeekTests(APITestCase):
+    url = '/api/films/popular/'
+
+    def setUp(self):
+        from django.core.cache import cache
+        from django.contrib.auth import get_user_model
+        from datetime import timedelta
+        from django.utils import timezone
+        from .models import Film, FilmEntry
+
+        cache.clear()
+        self._timedelta = timedelta
+        self._timezone = timezone
+        self._FilmEntry = FilmEntry
+        User = get_user_model()
+        self.users = [
+            User.objects.create_user(username=f'pop{i}', password='pw-123456')
+            for i in range(4)
+        ]
+        self.client.force_authenticate(self.users[0])
+        Film.objects.create(imdb_id='tt0000001', title='Blockbuster', year=2020, poster_url='p1')
+        Film.objects.create(imdb_id='tt0000002', title='Cult', year=1999, poster_url='p2')
+
+    def add(self, user, film_id, list_type, days_ago=0):
+        entry = self._FilmEntry.objects.create(
+            user=user, film_id=film_id, list_type=list_type,
+            slot_index=1 if list_type == 'top_5' else None,
+        )
+        self._FilmEntry.objects.filter(pk=entry.pk).update(
+            created_at=self._timezone.now() - self._timedelta(days=days_ago),
+        )
+
+    def test_counts_watched_and_watchlist_adds_from_the_last_week_only(self):
+        self.add(self.users[0], 'tt0000001', 'watched')
+        self.add(self.users[1], 'tt0000001', 'watchlist')
+        self.add(self.users[2], 'tt0000001', 'watched', days_ago=8)  # too old
+        self.add(self.users[0], 'tt0000002', 'watched')
+        self.add(self.users[3], 'tt0000002', 'top_5')  # top 5 does not count
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            [
+                {'film_id': 'tt0000001', 'title': 'Blockbuster', 'year': 2020,
+                 'poster_url': 'p1', 'adds': 2},
+                {'film_id': 'tt0000002', 'title': 'Cult', 'year': 1999,
+                 'poster_url': 'p2', 'adds': 1},
+            ],
+        )
+
+    def test_orders_by_adds_then_most_recent(self):
+        self.add(self.users[0], 'tt0000002', 'watched', days_ago=2)
+        self.add(self.users[1], 'tt0000001', 'watched', days_ago=3)
+        self.add(self.users[2], 'tt0000002', 'watched', days_ago=1)
+
+        ids = [row['film_id'] for row in self.client.get(self.url).json()]
+        self.assertEqual(ids, ['tt0000002', 'tt0000001'])
+
+    def test_fetches_details_for_popular_films_not_stored_yet(self):
+        from unittest import mock
+        from .models import Film
+
+        Film.objects.filter(imdb_id='tt0000002').delete()
+        self.add(self.users[0], 'tt0000002', 'watchlist')
+        fetched = Film(imdb_id='tt0000002', title='Fetched', year=2001, poster_url='p3')
+
+        with mock.patch('films.catalog_views.try_stored_film', return_value=fetched) as fetch:
+            body = self.client.get(self.url).json()
+
+        fetch.assert_called_once_with('tt0000002')
+        self.assertEqual(body[0]['title'], 'Fetched')
+
+    def test_skips_films_whose_details_cannot_be_loaded(self):
+        from unittest import mock
+        from .models import Film
+
+        Film.objects.filter(imdb_id='tt0000002').delete()
+        self.add(self.users[0], 'tt0000002', 'watchlist')
+
+        with mock.patch('films.catalog_views.try_stored_film', return_value=None):
+            body = self.client.get(self.url).json()
+
+        self.assertEqual(body, [])
+
+    def test_requires_login(self):
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.get(self.url).status_code, 401)
