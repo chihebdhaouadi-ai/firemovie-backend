@@ -18,6 +18,7 @@ VOTE_KINDS = [choice.value for choice in VoteKind]
 TAG_KEYS = [choice.value for choice in Tag]
 EXPLORE_LIMIT = 30
 TRENDING_LIMIT = 10
+FRIEND_TAKES_LIMIT = 20
 TRENDING_WINDOW = timedelta(days=7)
 POSITIVE = {'loved', 'blew_mind', 'made_think', 'made_laugh', 'masterpiece'}
 NEGATIVE = {'broke_heart', 'bored', 'disappointed'}
@@ -289,5 +290,32 @@ def trending_topics(viewer, limit=TRENDING_LIMIT):
         )
         .annotate(engagement=F('comment_total') * 2 + F('vote_total'))
         .order_by('-engagement', '-created_at', '-id')[:limit]
+    )
+    return _feed_items(takes, viewer)
+
+
+def friend_takes(viewer, limit=FRIEND_TAKES_LIMIT):
+    """Newest reviews written by accepted friends, across every film."""
+    ids = friend_ids(viewer)
+    if not ids:
+        return []
+    takes = list(
+        Take.objects.select_related('author')
+        .prefetch_related('votes')
+        .filter(author_id__in=ids, tag=Tag.REVIEW)
+        .annotate(comment_total=Count('comments'))
+        .order_by('-created_at', '-id')[:limit]
+    )
+    return _feed_items(takes, viewer)
+
+
+def my_takes(viewer):
+    """The viewer's own reviews, newest first."""
+    takes = list(
+        Take.objects.select_related('author')
+        .prefetch_related('votes')
+        .filter(author=viewer, tag=Tag.REVIEW)
+        .annotate(comment_total=Count('comments'))
+        .order_by('-created_at', '-id')
     )
     return _feed_items(takes, viewer)

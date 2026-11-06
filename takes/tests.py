@@ -9,7 +9,7 @@ from rest_framework.test import APITestCase
 
 from social.models import FriendRequest
 
-from .models import FilmReaction, Take, TakeComment, TakeVote
+from .models import FilmReaction, Tag, Take, TakeComment, TakeVote
 
 FILM = 'tt0111161'
 
@@ -465,3 +465,51 @@ class TopicCreateTests(APITestCase):
         feed = self.client.get('/api/takes/explore/').json()
         self.assertEqual(feed[0]['body'], 'Photo question')
         self.assertIsNone(feed[0]['film']['film_id'] or None)
+
+
+class FriendAndOwnTakesTests(APITestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.viewer = User.objects.create_user(username='viewer', password='pw-123456')
+        self.ana = User.objects.create_user(username='ana', password='pw-123456')
+        self.stranger = User.objects.create_user(username='stranger', password='pw-123456')
+        self.pending = User.objects.create_user(username='pending', password='pw-123456')
+        FriendRequest.objects.create(sender=self.viewer, receiver=self.ana, status='accepted')
+        FriendRequest.objects.create(sender=self.pending, receiver=self.viewer, status='pending')
+        self.client.force_authenticate(self.viewer)
+
+    def _take(self, author, body, film=FILM, tag=Tag.REVIEW):
+        return Take.objects.create(
+            film_id=film, author=author, tag=tag, body=body,
+            reaction='loved' if tag == Tag.REVIEW else None,
+        )
+
+    def test_friend_takes_lists_only_accepted_friends_reviews_newest_first(self):
+        self._take(self.ana, 'Older friend review', film='tt0000001')
+        self._take(self.ana, 'Newest friend review', film='tt0000002')
+        self._take(self.stranger, 'Stranger review')
+        self._take(self.pending, 'Pending friend review')
+        self._take(self.ana, 'Friend question', tag=Tag.QUESTION)
+        feed = self.client.get('/api/takes/friends/takes/').json()
+        self.assertEqual([item['body'] for item in feed],
+                         ['Newest friend review', 'Older friend review'])
+        self.assertEqual(feed[0]['film']['film_id'], 'tt0000002')
+        self.assertFalse(feed[0]['is_mine'])
+
+    def test_friend_takes_is_empty_without_friends(self):
+        FriendRequest.objects.filter(sender=self.viewer).delete()
+        self.assertEqual(self.client.get('/api/takes/friends/takes/').json(), [])
+
+    def test_my_takes_lists_only_own_reviews(self):
+        self._take(self.viewer, 'My first take', film='tt0000001')
+        self._take(self.viewer, 'My question', tag=Tag.QUESTION)
+        self._take(self.ana, 'Friend take', film='tt0000001')
+        feed = self.client.get('/api/takes/me/takes/').json()
+        self.assertEqual([item['body'] for item in feed], ['My first take'])
+        self.assertTrue(feed[0]['is_mine'])
+        self.assertEqual(feed[0]['film']['film_id'], 'tt0000001')
+
+    def test_both_endpoints_require_login(self):
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.get('/api/takes/friends/takes/').status_code, 401)
+        self.assertEqual(self.client.get('/api/takes/me/takes/').status_code, 401)

@@ -124,6 +124,16 @@ def trending_topics(request):
     return Response(services.trending_topics(request.user))
 
 
+@api_view(['GET'])
+def friend_takes(request):
+    return Response(services.friend_takes(request.user))
+
+
+@api_view(['GET'])
+def my_takes(request):
+    return Response(services.my_takes(request.user))
+
+
 def _take_preview(take):
     if take is None:
         return None
