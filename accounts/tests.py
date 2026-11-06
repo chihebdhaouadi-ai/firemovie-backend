@@ -7,7 +7,7 @@ from rest_framework.test import APITestCase
 
 from accounts.models import User
 from films.models import FilmEntry
-from reviews.models import Review
+from takes.models import Tag, Take, TakeVote
 
 PNG_BYTES = b'\x89PNG\r\n\x1a\n' + b'\x00' * 16
 
@@ -34,26 +34,31 @@ class PublicProfileTests(APITestCase):
         FilmEntry.objects.create(
             user=self.target, film_id='tt3', list_type=FilmEntry.ListType.WATCHLIST,
         )
-        Review.objects.create(
-            user=self.target, imdb_id='tt1', rating=4, writer_name='target',
+        Take.objects.create(
+            author=self.target, film_id='tt1', tag=Tag.REVIEW, body='Great',
         )
         self.client.force_authenticate(self.viewer)
 
         response = self.client.get(self.url(self.target.id))
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+        progress = response.data.pop('progress')
         self.assertEqual(response.data, {
             'id': self.target.id,
             'username': 'target',
             'bio': '',
             'avatar': None,
             'cover': None,
+            'equipped_frame': 'bronze',
             'stats': {'watched': 2, 'watchlist': 1, 'reviews': 1},
             'friendship': 'none',
             'friend_request_id': None,
             'followers': 0,
             'following': 0,
         })
+        self.assertEqual(progress['reviews'], 1)
+        self.assertEqual(progress['xp'], 20)
+        self.assertEqual(progress['level'], 1)
 
     def test_requires_authentication(self):
         response = self.client.get(self.url(self.target.id))
@@ -139,3 +144,70 @@ class ProfileUpdateTests(APITestCase):
         }, format='multipart')
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class EquippedFrameTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='me', email='me@example.com', password='pw-12345',
+        )
+        self.other = User.objects.create_user(
+            username='other', email='other@example.com', password='pw-12345',
+        )
+        self.client.force_authenticate(self.user)
+
+    def unlock_debater(self):
+        for index in range(50):
+            take = Take.objects.create(
+                author=self.user, film_id=f'tt{index:07d}', tag=Tag.REVIEW, body='Take',
+            )
+            TakeVote.objects.create(take=take, user=self.other, kind='well_argued')
+
+    def test_bronze_can_always_be_equipped(self):
+        response = self.client.patch(
+            '/api/account/profile', {'equipped_frame': 'bronze'}, format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['equipped_frame'], 'bronze')
+
+    def test_unlocked_frame_is_saved(self):
+        self.unlock_debater()
+
+        response = self.client.patch(
+            '/api/account/profile', {'equipped_frame': 'debater'}, format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['equipped_frame'], 'debater')
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.equipped_frame, 'debater')
+
+    def test_locked_frame_is_rejected(self):
+        response = self.client.patch(
+            '/api/account/profile', {'equipped_frame': 'explorer'}, format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json()['code'], 'frame_locked')
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.equipped_frame, 'bronze')
+
+    def test_unknown_frame_is_rejected(self):
+        response = self.client.patch(
+            '/api/account/profile', {'equipped_frame': 'diamond'}, format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json()['code'], 'invalid_frame')
+
+    def test_own_profile_returns_frame_and_progress(self):
+        response = self.client.get('/api/account/profile')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['equipped_frame'], 'bronze')
+        self.assertEqual(response.data['progress']['level'], 1)
+        self.assertEqual(
+            [frame['key'] for frame in response.data['progress']['frames']],
+            ['bronze', 'explorer', 'debater', 'gold', 'legend'],
+        )

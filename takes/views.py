@@ -5,7 +5,7 @@ from rest_framework.response import Response
 
 from social.serializers import UserCardSerializer
 
-from . import services, translation
+from . import reputation, services, translation
 from .errors import TakeError
 from .models import Tag, Take, TakeComment
 
@@ -175,6 +175,12 @@ def take_comments(request, take_id):
             raise TakeError(400, 'invalid_parent', 'That comment is no longer here.')
     item = services.create_comment(take, request.user, serializer.validated_data['body'], parent)
     return Response(item, status=201)
+
+
+@api_view(['GET'])
+def leaderboard(request):
+    period = request.query_params.get('period', 'week')
+    return Response(reputation.leaderboard_payload(request.user, period, request))
 
 
 @api_view(['POST'])

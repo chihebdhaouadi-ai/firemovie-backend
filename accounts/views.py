@@ -4,6 +4,9 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
+from takes import reputation
+
+from .errors import ProfileError
 from .models import User
 from .serializers import (
     LoginSerializer,
@@ -64,6 +67,12 @@ def profile_view(request):
             request.user, data=request.data, partial=True,
         )
         serializer.is_valid(raise_exception=True)
+        frame = serializer.validated_data.get('equipped_frame')
+        if frame is not None:
+            if frame not in reputation.FRAME_KEYS:
+                raise ProfileError('invalid_frame', 'Pick one of the avatar frames.')
+            if not reputation.is_frame_unlocked(request.user, frame):
+                raise ProfileError('frame_locked', 'Unlock this frame before equipping it.')
         serializer.save()
     return Response(UserSerializer(request.user, context={'request': request}).data)
 

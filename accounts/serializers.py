@@ -4,7 +4,8 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from films.models import FilmEntry
 from films.services import counts_for, film_ids_for
-from reviews.models import Review
+from takes import reputation
+from takes.models import Tag, Take
 from social.services import follower_count, following_count, friendship_between
 from .models import User
 
@@ -73,7 +74,7 @@ class LoginSerializer(serializers.Serializer):
 class ProfileUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ('bio', 'avatar', 'cover')
+        fields = ('bio', 'avatar', 'cover', 'equipped_frame')
 
     def validate_avatar(self, value):
         return _validate_image(value)
@@ -86,11 +87,16 @@ class UserSerializer(serializers.ModelSerializer):
     top_movies = serializers.SerializerMethodField()
     watched_movies = serializers.SerializerMethodField()
     watchlist_movies = serializers.SerializerMethodField()
+    progress = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = ('id', 'username', 'email', 'balance', 'bio', 'avatar', 'cover',
+                  'equipped_frame', 'progress',
                   'top_movies', 'watched_movies', 'watchlist_movies')
+
+    def get_progress(self, obj):
+        return reputation.progress_for(obj)
 
     def get_top_movies(self, obj):
         return film_ids_for(obj, FilmEntry.ListType.TOP_5)
@@ -105,7 +111,7 @@ class UserSerializer(serializers.ModelSerializer):
 class PublicProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ('id', 'username', 'bio', 'avatar', 'cover')
+        fields = ('id', 'username', 'bio', 'avatar', 'cover', 'equipped_frame')
 
     def to_representation(self, obj):
         data = super().to_representation(obj)
@@ -113,8 +119,9 @@ class PublicProfileSerializer(serializers.ModelSerializer):
         data['stats'] = {
             'watched': counts[FilmEntry.ListType.WATCHED],
             'watchlist': counts[FilmEntry.ListType.WATCHLIST],
-            'reviews': Review.objects.filter(user=obj).count(),
+            'reviews': Take.objects.filter(author=obj, tag=Tag.REVIEW).count(),
         }
+        data['progress'] = reputation.progress_for(obj)
         viewer = self.context['request'].user
         friendship, friend_request_id = friendship_between(viewer, obj)
         data['friendship'] = friendship
