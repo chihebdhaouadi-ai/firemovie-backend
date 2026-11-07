@@ -7,7 +7,7 @@ from social.serializers import UserCardSerializer
 
 from . import reputation, services, translation
 from .errors import TakeError
-from .models import Tag, Take, TakeComment
+from .models import TOPIC_VOTE_KINDS, Tag, Take, TakeComment
 
 
 class TakeBodySerializer(serializers.Serializer):
@@ -164,6 +164,8 @@ def set_vote(request, take_id, kind):
     take = get_object_or_404(Take.objects.select_related('author'), pk=take_id)
     if take.author_id == request.user.id:
         raise TakeError(400, 'own_take', 'You cannot vote on your own take.')
+    if kind in TOPIC_VOTE_KINDS and take.tag == Tag.REVIEW:
+        raise TakeError(400, 'invalid_vote', 'Likes are only for questions and discussions.')
     serializer = VoteBodySerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     services.set_vote(take, request.user, kind, serializer.validated_data['active'])

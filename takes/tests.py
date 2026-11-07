@@ -214,6 +214,24 @@ class VoteTests(APITestCase):
         response = self.client.put(self.url('well_argued', take_id=999999), {'active': True}, format='json')
         self.assertEqual(response.status_code, 404)
 
+    def test_like_and_dislike_work_on_questions(self):
+        self.take.tag = 'question'
+        self.take.save(update_fields=['tag'])
+        response = self.client.put(self.url('like'), {'active': True}, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['votes']['like'], 1)
+        self.assertEqual(response.json()['my_votes'], ['like'])
+
+        response = self.client.put(self.url('dislike'), {'active': True}, format='json')
+        self.assertEqual(response.json()['votes']['dislike'], 1)
+        self.assertEqual(sorted(response.json()['my_votes']), ['dislike', 'like'])
+
+    def test_like_and_dislike_are_rejected_on_reviews(self):
+        response = self.client.put(self.url('like'), {'active': True}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['code'], 'invalid_vote')
+        self.assertFalse(TakeVote.objects.filter(take=self.take, kind='like').exists())
+
 
 class CommentTests(APITestCase):
     def setUp(self):

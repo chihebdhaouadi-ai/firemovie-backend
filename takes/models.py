@@ -26,6 +26,12 @@ class VoteKind(models.TextChoices):
     CHANGED_MY_MIND = 'changed_my_mind', 'Changed my mind'
     WELL_ARGUED = 'well_argued', 'Well argued'
     DISAGREE_BUT_FAIR = 'disagree_but_fair', 'Disagree but fair'
+    # Questions and discussions only; reviews keep the three reaction kinds above.
+    LIKE = 'like', 'Like'
+    DISLIKE = 'dislike', 'Dislike'
+
+
+TOPIC_VOTE_KINDS = (VoteKind.LIKE, VoteKind.DISLIKE)
 
 
 class FilmReaction(models.Model):
