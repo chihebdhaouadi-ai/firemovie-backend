@@ -9,7 +9,7 @@ from rest_framework.test import APITestCase
 
 from social.models import FriendRequest
 
-from .models import FilmReaction, Tag, Take, TakeComment, TakeVote
+from .models import FilmReaction, Tag, Take, TakeComment, TakeCommentVote, TakeVote
 
 FILM = 'tt0111161'
 
@@ -531,3 +531,71 @@ class FriendAndOwnTakesTests(APITestCase):
         self.client.force_authenticate(None)
         self.assertEqual(self.client.get('/api/takes/friends/takes/').status_code, 401)
         self.assertEqual(self.client.get('/api/takes/me/takes/').status_code, 401)
+
+
+class CommentVoteTests(APITestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.viewer = User.objects.create_user(username='viewer', password='pw-123456')
+        self.ana = User.objects.create_user(username='ana', password='pw-123456')
+        self.bo = User.objects.create_user(username='bo', password='pw-123456')
+        self.take = Take.objects.create(tag=Tag.QUESTION, author=self.ana, body='Worth it?')
+        self.comment = TakeComment.objects.create(take=self.take, author=self.bo, body='Yes.')
+
+    def url(self, kind, comment_id=None):
+        return f'/api/takes/comments/{comment_id or self.comment.id}/votes/{kind}/'
+
+    def test_like_then_dislike_replaces_the_previous_vote(self):
+        self.client.force_authenticate(self.viewer)
+        self.client.put(self.url('like'), {'active': True}, format='json')
+        response = self.client.put(self.url('dislike'), {'active': True}, format='json')
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual((body['likes'], body['dislikes'], body['my_vote']), (0, 1, 'dislike'))
+        self.assertEqual(TakeCommentVote.objects.filter(comment=self.comment, user=self.viewer).count(), 1)
+
+    def test_removing_a_vote_clears_it(self):
+        self.client.force_authenticate(self.viewer)
+        self.client.put(self.url('like'), {'active': True}, format='json')
+        response = self.client.put(self.url('like'), {'active': False}, format='json')
+        self.assertEqual(response.json()['likes'], 0)
+        self.assertIsNone(response.json()['my_vote'])
+
+    def test_vote_is_idempotent(self):
+        self.client.force_authenticate(self.viewer)
+        self.client.put(self.url('like'), {'active': True}, format='json')
+        response = self.client.put(self.url('like'), {'active': True}, format='json')
+        self.assertEqual(response.json()['likes'], 1)
+
+    def test_cannot_vote_on_own_comment(self):
+        self.client.force_authenticate(self.bo)
+        response = self.client.put(self.url('like'), {'active': True}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['code'], 'own_comment')
+
+    def test_unknown_kind_is_rejected(self):
+        self.client.force_authenticate(self.viewer)
+        response = self.client.put(self.url('loved'), {'active': True}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['code'], 'invalid_vote')
+
+    def test_missing_comment_is_404(self):
+        self.client.force_authenticate(self.viewer)
+        response = self.client.put(self.url('like', comment_id=99999), {'active': True}, format='json')
+        self.assertEqual(response.status_code, 404)
+
+    def test_comment_list_counts_votes_and_flags_viewer_state(self):
+        other = get_user_model().objects.create_user(username='cy', password='pw-123456')
+        TakeCommentVote.objects.create(comment=self.comment, user=self.viewer, kind='like')
+        TakeCommentVote.objects.create(comment=self.comment, user=other, kind='dislike')
+        self.client.force_authenticate(self.viewer)
+        comments = self.client.get(f'/api/takes/takes/{self.take.id}/comments/').json()
+        item = comments[0]
+        self.assertEqual((item['likes'], item['dislikes'], item['my_vote']), (1, 1, 'like'))
+        self.assertFalse(item['is_mine'])
+
+    def test_author_sees_is_mine_on_own_comment(self):
+        self.client.force_authenticate(self.bo)
+        comments = self.client.get(f'/api/takes/takes/{self.take.id}/comments/').json()
+        self.assertTrue(comments[0]['is_mine'])
+        self.assertEqual(comments[0]['my_vote'], None)

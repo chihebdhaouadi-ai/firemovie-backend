@@ -11,10 +11,11 @@ from social.models import FriendRequest
 from .errors import TakeError
 from films.models import Film
 
-from .models import FilmReaction, Reaction, Tag, Take, TakeComment, TakeVote, VoteKind
+from .models import FilmReaction, Reaction, Tag, Take, TakeComment, TakeCommentVote, TakeVote, VoteKind
 
 REACTION_KEYS = [choice.value for choice in Reaction]
 VOTE_KINDS = [choice.value for choice in VoteKind]
+COMMENT_VOTE_KINDS = [VoteKind.LIKE, VoteKind.DISLIKE]
 TAG_KEYS = [choice.value for choice in Tag]
 EXPLORE_LIMIT = 30
 TRENDING_LIMIT = 10
@@ -173,7 +174,16 @@ def set_vote(take, user, kind, active):
         TakeVote.objects.filter(take=take, user=user, kind=kind).delete()
 
 
-def comment_item(comment, take):
+def comment_item(comment, take, viewer):
+    likes = dislikes = 0
+    my_vote = None
+    for vote in comment.votes.all():
+        if vote.kind == VoteKind.LIKE:
+            likes += 1
+        else:
+            dislikes += 1
+        if vote.user_id == viewer.id:
+            my_vote = vote.kind
     return {
         'id': comment.id,
         'author_id': comment.author_id,
@@ -182,19 +192,38 @@ def comment_item(comment, take):
         'body': comment.body,
         'created_at': serializers.DateTimeField().to_representation(comment.created_at),
         'is_writer': comment.author_id == take.author_id,
+        'is_mine': comment.author_id == viewer.id,
+        'likes': likes,
+        'dislikes': dislikes,
+        'my_vote': my_vote,
     }
 
 
-def comments_for_take(take):
-    return [
-        comment_item(comment, take)
-        for comment in TakeComment.objects.filter(take=take).select_related('author').order_by('created_at', 'id')
-    ]
+def comments_for_take(take, viewer):
+    comments = (
+        TakeComment.objects.filter(take=take)
+        .select_related('author')
+        .prefetch_related('votes')
+        .order_by('created_at', 'id')
+    )
+    return [comment_item(comment, take, viewer) for comment in comments]
 
 
 def create_comment(take, user, body, parent=None):
     comment = TakeComment.objects.create(take=take, author=user, body=body, parent=parent)
-    return comment_item(comment, take)
+    return comment_item(comment, take, user)
+
+
+def set_comment_vote(comment, user, kind, active):
+    """Like or dislike a comment. Choosing one replaces the other."""
+    with transaction.atomic():
+        if active:
+            TakeCommentVote.objects.filter(comment=comment, user=user).exclude(kind=kind).delete()
+            TakeCommentVote.objects.update_or_create(
+                comment=comment, user=user, defaults={'kind': kind}
+            )
+        else:
+            TakeCommentVote.objects.filter(comment=comment, user=user, kind=kind).delete()
 
 
 def friend_ids(user):

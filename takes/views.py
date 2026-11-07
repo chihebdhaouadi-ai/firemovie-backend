@@ -172,11 +172,24 @@ def set_vote(request, take_id, kind):
     return Response(services.take_item(take, request.user))
 
 
+@api_view(['PUT'])
+def set_comment_vote(request, comment_id, kind):
+    if kind not in services.COMMENT_VOTE_KINDS:
+        raise TakeError(400, 'invalid_vote', 'Unknown vote.')
+    comment = get_object_or_404(TakeComment.objects.select_related('take', 'author'), pk=comment_id)
+    if comment.author_id == request.user.id:
+        raise TakeError(400, 'own_comment', 'You cannot vote on your own comment.')
+    serializer = VoteBodySerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    services.set_comment_vote(comment, request.user, kind, serializer.validated_data['active'])
+    return Response(services.comment_item(comment, comment.take, request.user))
+
+
 @api_view(['GET', 'POST'])
 def take_comments(request, take_id):
     take = get_object_or_404(Take.objects.select_related('author'), pk=take_id)
     if request.method == 'GET':
-        return Response(services.comments_for_take(take))
+        return Response(services.comments_for_take(take, request.user))
     serializer = CommentBodySerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     parent = None

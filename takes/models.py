@@ -95,6 +95,25 @@ class TakeVote(models.Model):
         ]
 
 
+class TakeCommentVote(models.Model):
+    """A like or dislike on a comment. A viewer holds at most one per comment."""
+
+    comment = models.ForeignKey('TakeComment', on_delete=models.CASCADE, related_name='votes')
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='take_comment_votes',
+    )
+    kind = models.CharField(max_length=8, choices=[(VoteKind.LIKE, 'Like'), (VoteKind.DISLIKE, 'Dislike')])
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'take_comment_votes'
+        constraints = [
+            UniqueConstraint(fields=['comment', 'user'], name='take_comment_vote_unique'),
+        ]
+
+
 class TakeComment(models.Model):
     take = models.ForeignKey(Take, on_delete=models.CASCADE, related_name='comments')
     author = models.ForeignKey(
