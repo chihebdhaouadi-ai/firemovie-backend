@@ -11,7 +11,7 @@ from social.models import FriendRequest
 from .errors import TakeError
 from films.models import Film
 
-from .models import FilmReaction, Reaction, Tag, Take, TakeComment, TakeCommentVote, TakeVote, VoteKind
+from .models import TOPIC_VOTE_KINDS, FilmReaction, Reaction, Tag, Take, TakeComment, TakeCommentVote, TakeVote, VoteKind
 
 REACTION_KEYS = [choice.value for choice in Reaction]
 VOTE_KINDS = [choice.value for choice in VoteKind]
@@ -168,10 +168,14 @@ def create_take(film_id, user, body, tag=Tag.REVIEW):
 
 
 def set_vote(take, user, kind, active):
-    if active:
-        TakeVote.objects.get_or_create(take=take, user=user, kind=kind)
-    else:
-        TakeVote.objects.filter(take=take, user=user, kind=kind).delete()
+    """Vote on a take. A question or discussion takes a like or a dislike, not both."""
+    with transaction.atomic():
+        if active:
+            if kind in TOPIC_VOTE_KINDS:
+                TakeVote.objects.filter(take=take, user=user, kind__in=TOPIC_VOTE_KINDS).exclude(kind=kind).delete()
+            TakeVote.objects.get_or_create(take=take, user=user, kind=kind)
+        else:
+            TakeVote.objects.filter(take=take, user=user, kind=kind).delete()
 
 
 def comment_item(comment, take, viewer):

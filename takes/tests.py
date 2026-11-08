@@ -224,7 +224,18 @@ class VoteTests(APITestCase):
 
         response = self.client.put(self.url('dislike'), {'active': True}, format='json')
         self.assertEqual(response.json()['votes']['dislike'], 1)
-        self.assertEqual(sorted(response.json()['my_votes']), ['dislike', 'like'])
+        self.assertEqual(response.json()['votes']['like'], 0)
+        self.assertEqual(response.json()['my_votes'], ['dislike'])
+
+    def test_topic_takes_only_one_of_like_or_dislike(self):
+        self.take.tag = 'question'
+        self.take.save(update_fields=['tag'])
+        self.client.put(self.url('dislike'), {'active': True}, format='json')
+        response = self.client.put(self.url('like'), {'active': True}, format='json')
+        self.assertEqual(response.json()['my_votes'], ['like'])
+        self.assertEqual(TakeVote.objects.filter(take=self.take, user=self.viewer).count(), 1)
+        response = self.client.put(self.url('like'), {'active': False}, format='json')
+        self.assertEqual(response.json()['my_votes'], [])
 
     def test_like_and_dislike_are_rejected_on_reviews(self):
         response = self.client.put(self.url('like'), {'active': True}, format='json')
