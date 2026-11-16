@@ -1,0 +1,185 @@
+from django.conf import settings
+from django.db import models
+from django.db.models import Q, UniqueConstraint
+
+
+class Reaction(models.TextChoices):
+    LOVED = 'loved', 'Loved it'
+    BROKE_HEART = 'broke_heart', 'Broke my heart'
+    BLEW_MIND = 'blew_mind', 'Blew my mind'
+    MADE_CRY = 'made_cry', 'Made me cry'
+    SHOCKED = 'shocked', 'Shocked me'
+    MADE_LAUGH = 'made_laugh', 'Made me laugh'
+    BORED = 'bored', 'Bored me'
+    DISAPPOINTED = 'disappointed', 'Disappointed me'
+    MADE_THINK = 'made_think', 'Made me think'
+    MASTERPIECE = 'masterpiece', 'Masterpiece'
+
+
+class Tag(models.TextChoices):
+    REVIEW = 'review', 'Review'
+    QUESTION = 'question', 'Question'
+    DISCUSSION = 'discussion', 'Discussion'
+    HOT_TAKE = 'hot_take', 'Hot take'
+    POLL = 'poll', 'Poll'
+    SCENE = 'scene', 'Scene'
+
+
+class VoteKind(models.TextChoices):
+    CHANGED_MY_MIND = 'changed_my_mind', 'Changed my mind'
+    WELL_ARGUED = 'well_argued', 'Well argued'
+    DISAGREE_BUT_FAIR = 'disagree_but_fair', 'Disagree but fair'
+    # Questions and discussions only; reviews keep the three reaction kinds above.
+    LIKE = 'like', 'Like'
+    DISLIKE = 'dislike', 'Dislike'
+
+
+class CommentStance(models.TextChoices):
+    CHANGED_MY_MIND = VoteKind.CHANGED_MY_MIND, 'Changed my mind'
+    DISAGREE_BUT_FAIR = VoteKind.DISAGREE_BUT_FAIR, 'Disagree but fair'
+
+
+TOPIC_VOTE_KINDS = (VoteKind.LIKE, VoteKind.DISLIKE)
+
+
+class FilmReaction(models.Model):
+    film_id = models.CharField(max_length=20, db_index=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='film_reactions',
+    )
+    reaction = models.CharField(max_length=16, choices=Reaction.choices)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'take_film_reactions'
+        constraints = [
+            UniqueConstraint(fields=['film_id', 'user'], name='film_reaction_unique_per_user'),
+        ]
+
+
+class Take(models.Model):
+    # Blank for photo topics that are not about a specific film.
+    film_id = models.CharField(max_length=20, db_index=True, blank=True)
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='takes',
+    )
+    reaction = models.CharField(max_length=16, choices=Reaction.choices, null=True, blank=True)
+    tag = models.CharField(max_length=16, choices=Tag.choices, default=Tag.REVIEW)
+    body = models.TextField(max_length=280)
+    image = models.FileField(upload_to='takes/', blank=True, null=True)
+    # Topics only: the body may give away the plot, so the app blurs it until tapped.
+    spoiler = models.BooleanField(default=False)
+    # Scene topics only: the moment being discussed and where it happens.
+    scene = models.CharField(max_length=120, blank=True, default='')
+    timecode = models.CharField(max_length=20, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'takes'
+        constraints = [
+            # Only reviews are limited to one per author per film; questions and
+            # discussions can be posted freely.
+            UniqueConstraint(
+                fields=['film_id', 'author'],
+                condition=Q(tag='review'),
+                name='take_unique_per_author',
+            ),
+        ]
+
+
+class TakeVote(models.Model):
+    take = models.ForeignKey(Take, on_delete=models.CASCADE, related_name='votes')
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='take_votes',
+    )
+    kind = models.CharField(max_length=24, choices=VoteKind.choices)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'take_votes'
+        constraints = [
+            UniqueConstraint(fields=['take', 'user', 'kind'], name='take_vote_unique'),
+        ]
+
+
+class PollOption(models.Model):
+    take = models.ForeignKey(Take, on_delete=models.CASCADE, related_name='poll_options')
+    label = models.CharField(max_length=80)
+    position = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        db_table = 'take_poll_options'
+        ordering = ['position', 'id']
+
+
+class PollVote(models.Model):
+    """A viewer's single choice on a poll. Changing it replaces the old choice."""
+
+    take = models.ForeignKey(Take, on_delete=models.CASCADE, related_name='poll_votes')
+    option = models.ForeignKey(PollOption, on_delete=models.CASCADE, related_name='votes')
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='poll_votes',
+    )
+    created_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'take_poll_votes'
+        constraints = [
+            UniqueConstraint(fields=['take', 'user'], name='poll_vote_unique_per_user'),
+        ]
+
+
+class TakeCommentVote(models.Model):
+    """A like or dislike on a comment. A viewer holds at most one per comment."""
+
+    comment = models.ForeignKey('TakeComment', on_delete=models.CASCADE, related_name='votes')
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='take_comment_votes',
+    )
+    kind = models.CharField(max_length=8, choices=[(VoteKind.LIKE, 'Like'), (VoteKind.DISLIKE, 'Dislike')])
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'take_comment_votes'
+        constraints = [
+            UniqueConstraint(fields=['comment', 'user'], name='take_comment_vote_unique'),
+        ]
+
+
+class TakeComment(models.Model):
+    take = models.ForeignKey(Take, on_delete=models.CASCADE, related_name='comments')
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='take_comments',
+    )
+    body = models.CharField(max_length=300)
+    stance = models.CharField(
+        max_length=24,
+        choices=CommentStance.choices,
+        null=True,
+        blank=True,
+        default=None,
+    )
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='replies',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'take_comments'
+        ordering = ['created_at', 'id']

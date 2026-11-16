@@ -4,9 +4,10 @@ from django.db import models
 
 class User(AbstractUser):
     balance = models.IntegerField(default=5)
-    top_movies = models.JSONField(default=list, blank=True)
-    watched_movies = models.JSONField(default=list, blank=True)
-    watchlist_movies = models.JSONField(default=list, blank=True)
+    bio = models.CharField(max_length=280, blank=True, default='')
+    avatar = models.FileField(upload_to='avatars/', blank=True, null=True)
+    cover = models.FileField(upload_to='covers/', blank=True, null=True)
+    equipped_frame = models.CharField(max_length=20, default='bronze')
 
     class Meta:
         db_table = 'users'

@@ -1,11 +1,26 @@
 import os
 from pathlib import Path
 
+import dj_database_url
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'dev-secret-key-change-in-prod')
 DEBUG = os.environ.get('DJANGO_DEBUG', 'True').lower() in ('true', '1')
-ALLOWED_HOSTS = ['*']
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY') or (
+    'dev-secret-key-change-in-prod' if DEBUG else None
+)
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get('DJANGO_ALLOWED_HOSTS', '*' if DEBUG else '').split(',')
+    if host.strip()
+]
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', '').split(',')
+    if origin.strip()
+]
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -20,11 +35,20 @@ INSTALLED_APPS = [
     'accounts',
     'films',
     'reviews',
+    'social',
+    'takes',
+    'landing',
+    'articles',
+    'upcoming',
 ]
+
+# Where the landing page's "Join" buttons send visitors (the FilmSage web app).
+FILMSAGE_APP_URL = os.environ.get('FILMSAGE_APP_URL', 'https://firemovies-d3c6b.web.app')
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -52,10 +76,11 @@ TEMPLATES = [
 WSGI_APPLICATION = 'config.wsgi.application'
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    'default': dj_database_url.config(
+        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+        conn_max_age=600,
+        ssl_require=not DEBUG,
+    )
 }
 
 AUTH_USER_MODEL = 'accounts.User'
@@ -64,8 +89,29 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.TokenAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.AllowAny',
+        'rest_framework.permissions.IsAuthenticated',
     ],
+    'EXCEPTION_HANDLER': 'config.exceptions.api_exception_handler',
+}
+
+RAPIDAPI_KEY = os.environ.get('RAPIDAPI_KEY', '')
+RAPIDAPI_HOST = 'online-movie-database.p.rapidapi.com'
+RAPIDAPI_TIMEOUT_SECONDS = 8
+RAPIDAPI_CACHE_SECONDS = 60 * 60 * 6
+OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '')
+IMDB232_RAPIDAPI_KEY = os.environ.get('IMDB232_RAPIDAPI_KEY', '')
+NEWS_CACHE_SECONDS = 60 * 30
+
+STREAMING_COUNTRY = os.environ.get('STREAMING_COUNTRY', 'us').lower()
+
+OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
+OPENROUTER_TRANSLATE_MODEL = os.environ.get('OPENROUTER_TRANSLATE_MODEL', 'openai/gpt-4o-mini')
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'filmwise-default',
+    }
 }
 
 CORS_ALLOW_ALL_ORIGINS = True
@@ -75,4 +121,26 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedStaticFilesStorage',
+    },
+}
+MEDIA_URL = 'media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+if os.environ.get('BUCKETEER_BUCKET_NAME'):
+    AWS_STORAGE_BUCKET_NAME = os.environ['BUCKETEER_BUCKET_NAME']
+    AWS_ACCESS_KEY_ID = os.environ['BUCKETEER_AWS_ACCESS_KEY_ID']
+    AWS_SECRET_ACCESS_KEY = os.environ['BUCKETEER_AWS_SECRET_ACCESS_KEY']
+    AWS_S3_REGION_NAME = os.environ.get('BUCKETEER_AWS_REGION', 'us-east-1')
+    AWS_QUERYSTRING_AUTH = True
+    AWS_QUERYSTRING_EXPIRE = 60 * 60 * 24 * 7
+    AWS_S3_SIGNATURE_VERSION = 's3v4'
+    AWS_S3_FILE_OVERWRITE = False
+    STORAGES['default'] = {'BACKEND': 'storages.backends.s3.S3Storage'}
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
