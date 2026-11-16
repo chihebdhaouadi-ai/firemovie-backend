@@ -12,6 +12,8 @@ All notable changes to the FilmSage backend. Format:
 - GitHub issue and pull request templates; CI runs on pushes and pull requests.
 - Movie news source (imdb232) for the articles feed.
 - Comment stance, take tags, poll / scene / spoiler takes (migrations 0007 and 0008).
+- `GET /api/films/people/<nm id>/`: person photo, height, biography, birth/death and
+  known-for films from IMDb232, for the app's cast and crew pages (#16).
 
 ## [0.1.0] — baseline
 

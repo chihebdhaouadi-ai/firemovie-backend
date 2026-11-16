@@ -55,7 +55,7 @@ before a film is cached.
 |---|---|---|---|
 | RapidAPI online-movie-database | Search, details, where to watch, stills | `RAPIDAPI_KEY` | `films/movie_source.py` |
 | OMDb | Detail fallback | `OMDB_API_KEY` | `films/movie_source.py` |
-| RapidAPI imdb232 | Movie news feed | `IMDB232_RAPIDAPI_KEY` | `articles/news_source.py` |
+| RapidAPI imdb232 | Movie news feed; person pages | `IMDB232_RAPIDAPI_KEY` | `articles/news_source.py`, `films/people.py` |
 | OpenRouter | Translation of takes and comments | `OPENROUTER_API_KEY`, `OPENROUTER_TRANSLATE_MODEL` | `takes/translation.py` |
 | Heroku Postgres | Database | `DATABASE_URL` | `dj_database_url` |
 | Bucketeer (S3) | Uploaded media | `BUCKETEER_*` | `django-storages` |

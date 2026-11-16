@@ -48,6 +48,7 @@ Retire after the app moves to `/api/lists/`.
 | GET | `<film_id>/` | yes | Film detail (cached in the `Film` table) with where-to-watch providers |
 | GET | `<film_id>/stills/` | yes | Still images |
 | GET | `popular/` | yes | Popular this week (by FilmSage activity) |
+| GET | `people/<nm id>/` | not yet | Person page data from IMDb232 (`actors/get-overview` + `actors/get-known-for`), cached 30 days (2 IMDb232 calls per uncached person). Returns `person_id`, `name`, `photo_url`, `height` (`cm`, `display`, or null), `biography`, `birth_date`, `birth_place`, `death_date`, `known_for` (up to 20 films: `film_id`, `title`, `year`, `poster_url`, `credit_type` cast/crew, `job`, `characters`). TV titles are left out. Errors `person_not_found` (404), `movie_source_not_configured` (503, no `IMDB232_RAPIDAPI_KEY`), `movie_source_unavailable` (502) |
 
 ## Takes — `/api/takes/`
 

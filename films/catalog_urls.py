@@ -15,4 +15,9 @@ urlpatterns = [
         catalog_views.FilmStillsView.as_view(),
         name='film_stills',
     ),
+    re_path(
+        r'^people/(?P<person_id>nm\d{1,10})/$',
+        catalog_views.PersonDetailView.as_view(),
+        name='person_detail',
+    ),
 ]

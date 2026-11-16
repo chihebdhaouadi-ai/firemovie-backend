@@ -12,6 +12,7 @@ from .models import Film, FilmEntry
 from .serializers import PageParamSerializer
 from .services import lists_containing
 from .movie_source import film_stills, search_movies
+from .people import person_detail
 
 POPULAR_WINDOW = timedelta(days=7)
 POPULAR_LIMIT = 10
@@ -57,6 +58,11 @@ class FilmDetailView(APIView):
 class FilmStillsView(APIView):
     def get(self, request, film_id):
         return Response(film_stills(film_id))
+
+
+class PersonDetailView(APIView):
+    def get(self, request, person_id):
+        return Response(person_detail(person_id))
 
 
 class PopularThisWeekView(APIView):
