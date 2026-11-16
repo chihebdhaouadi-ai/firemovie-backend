@@ -7,7 +7,7 @@ from social.serializers import UserCardSerializer
 
 from . import reputation, services, translation
 from .errors import TakeError
-from .models import TOPIC_VOTE_KINDS, Tag, Take, TakeComment
+from .models import CommentStance, TOPIC_VOTE_KINDS, Tag, Take, TakeComment
 
 
 class TakeBodySerializer(serializers.Serializer):
@@ -19,11 +19,24 @@ MAX_TOPIC_IMAGE_BYTES = 5 * 1024 * 1024
 TOPIC_IMAGE_TYPES = {'image/jpeg', 'image/png', 'image/webp'}
 
 
+MAX_POLL_OPTIONS = 4
+MIN_POLL_OPTIONS = 2
+
+
 class TopicSerializer(serializers.Serializer):
     body = serializers.CharField(max_length=280, trim_whitespace=True)
-    tag = serializers.ChoiceField(choices=[Tag.QUESTION, Tag.DISCUSSION])
+    tag = serializers.ChoiceField(choices=[Tag.QUESTION, Tag.DISCUSSION, Tag.HOT_TAKE, Tag.POLL, Tag.SCENE])
     film_id = serializers.CharField(max_length=20, required=False, allow_blank=True, default='')
     image = serializers.FileField(required=False, allow_null=True, default=None)
+    options = serializers.ListField(
+        child=serializers.CharField(max_length=80, trim_whitespace=True, allow_blank=True),
+        max_length=MAX_POLL_OPTIONS,
+        required=False,
+        default=list,
+    )
+    scene = serializers.CharField(max_length=120, required=False, allow_blank=True, default='', trim_whitespace=True)
+    timecode = serializers.CharField(max_length=20, required=False, allow_blank=True, default='', trim_whitespace=True)
+    spoiler = serializers.BooleanField(required=False, default=False)
 
     def validate_image(self, image):
         if image is None:
@@ -35,6 +48,33 @@ class TopicSerializer(serializers.Serializer):
         return image
 
     def validate(self, data):
+        tag = data['tag']
+        if tag == Tag.POLL:
+            options = [option for option in data['options'] if option]
+            if not MIN_POLL_OPTIONS <= len(options) <= MAX_POLL_OPTIONS:
+                raise serializers.ValidationError(
+                    'Add 2 to 4 options to your poll.', code='poll_options_invalid'
+                )
+            if len({option.lower() for option in options}) != len(options):
+                raise serializers.ValidationError(
+                    'Each poll option must be different.', code='poll_options_invalid'
+                )
+            data['options'] = options
+            # Polls are about the question, not a film or a photo.
+            data['film_id'] = data['film_id'] or ''
+            data['image'] = None
+            return data
+
+        data['options'] = []
+        if tag == Tag.SCENE:
+            if not data['film_id']:
+                raise serializers.ValidationError('Choose the movie this scene is from.', code='scene_needs_film')
+            if not data['scene']:
+                raise serializers.ValidationError('Name the scene you are talking about.', code='scene_required')
+            return data
+
+        data['scene'] = ''
+        data['timecode'] = ''
         if not data['film_id'] and data.get('image') is None:
             raise serializers.ValidationError(
                 'Choose a movie or add a photo to your topic.', code='topic_needs_subject'
@@ -45,6 +85,12 @@ class TopicSerializer(serializers.Serializer):
 class CommentBodySerializer(serializers.Serializer):
     body = serializers.CharField(max_length=300, trim_whitespace=True)
     parent_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    stance = serializers.ChoiceField(
+        choices=CommentStance.choices,
+        required=False,
+        allow_null=True,
+        default=None,
+    )
 
 
 class VoteBodySerializer(serializers.Serializer):
@@ -110,8 +156,26 @@ def create_topic(request):
         data['tag'],
         film_id=data['film_id'],
         image=data.get('image'),
+        options=data['options'],
+        scene=data['scene'],
+        timecode=data['timecode'],
+        spoiler=data['spoiler'],
     )
     return Response(item, status=201)
+
+
+class PollVoteSerializer(serializers.Serializer):
+    option_id = serializers.IntegerField(min_value=1)
+
+
+@api_view(['POST'])
+def vote_poll(request, take_id):
+    take = get_object_or_404(Take.objects.select_related('author'), pk=take_id)
+    serializer = PollVoteSerializer(data=request.data)
+    if not serializer.is_valid():
+        raise _first_error(serializer.errors)
+    item = services.vote_poll(take, request.user, serializer.validated_data['option_id'])
+    return Response(item)
 
 
 @api_view(['GET'])
@@ -198,7 +262,22 @@ def take_comments(request, take_id):
         parent = TakeComment.objects.filter(pk=parent_id, take=take).first()
         if parent is None:
             raise TakeError(400, 'invalid_parent', 'That comment is no longer here.')
-    item = services.create_comment(take, request.user, serializer.validated_data['body'], parent)
+    stance = serializer.validated_data.get('stance')
+    if stance is not None and (take.tag != Tag.REVIEW or parent is not None):
+        raise TakeError(
+            400,
+            'invalid_stance',
+            'Stances are only allowed on top-level comments on reviews.',
+        )
+    if stance is not None and take.author_id == request.user.id:
+        raise TakeError(400, 'own_take', 'You cannot vote on your own take.')
+    item = services.create_comment(
+        take,
+        request.user,
+        serializer.validated_data['body'],
+        parent,
+        stance=stance,
+    )
     return Response(item, status=201)
 
 

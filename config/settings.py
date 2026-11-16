@@ -98,6 +98,9 @@ RAPIDAPI_KEY = os.environ.get('RAPIDAPI_KEY', '')
 RAPIDAPI_HOST = 'online-movie-database.p.rapidapi.com'
 RAPIDAPI_TIMEOUT_SECONDS = 8
 RAPIDAPI_CACHE_SECONDS = 60 * 60 * 6
+OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '')
+IMDB232_RAPIDAPI_KEY = os.environ.get('IMDB232_RAPIDAPI_KEY', '')
+NEWS_CACHE_SECONDS = 60 * 30
 
 STREAMING_COUNTRY = os.environ.get('STREAMING_COUNTRY', 'us').lower()
 

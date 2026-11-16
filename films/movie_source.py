@@ -13,6 +13,7 @@ IMDB_ID_PATTERN = re.compile(r'tt\d{1,10}')
 SEARCH_LIMIT = 10
 STILLS_LIMIT = 10
 STREAMING_HOST = 'streaming-availability.p.rapidapi.com'
+OMDB_URL = 'https://www.omdbapi.com/'
 
 
 class MovieSourceNotConfigured(APIException):
@@ -60,32 +61,61 @@ def _get(path, params):
     return _rapidapi_get(settings.RAPIDAPI_HOST, path, params)
 
 
+def _omdb_get(params):
+    if not settings.OMDB_API_KEY:
+        raise MovieSourceNotConfigured()
+    return _fetch_json(
+        f'{OMDB_URL}?{urlencode({"apikey": settings.OMDB_API_KEY, **params})}',
+        {},
+        settings.RAPIDAPI_TIMEOUT_SECONDS,
+    )
+
+
 def _cache_key(prefix, raw):
     digest = hashlib.sha256(raw.encode('utf-8')).hexdigest()
     return f'movie:{prefix}:{digest}'
 
 
-def _imdb_id(value):
-    match = IMDB_ID_PATTERN.search(value or '')
-    return match.group(0) if match else None
-
-
 def _is_movie(row):
-    return row.get('titleType') == 'movie' and _imdb_id(row.get('id')) is not None
+    return (
+        row.get('Type') == 'movie'
+        and IMDB_ID_PATTERN.fullmatch(row.get('imdbID') or '') is not None
+    )
 
 
 def _summary(row):
     return {
-        'film_id': _imdb_id(row.get('id')),
-        'title': row.get('title') or '',
-        'year': row.get('year'),
-        'poster_url': (row.get('image') or {}).get('url'),
+        'film_id': row['imdbID'],
+        'title': row.get('Title') or '',
+        'year': _year(row.get('Year')),
+        'poster_url': _poster(row.get('Poster')),
     }
 
 
-def _director(credits):
-    directors = (credits.get('crew') or {}).get('director') or []
-    return directors[0].get('name') if directors else None
+def _year(value):
+    match = re.match(r'\s*(\d{4})', str(value or ''))
+    return int(match.group(1)) if match else None
+
+
+def _poster(value):
+    return value if isinstance(value, str) and value != 'N/A' else None
+
+
+def _omdb_error(data):
+    if not isinstance(data, dict):
+        raise MovieSourceUnavailable()
+    if data.get('Response') == 'False':
+        return data.get('Error') or 'Unknown OMDb error'
+    return None
+
+
+def _omdb_not_found(data):
+    error = _omdb_error(data)
+    if error is None:
+        return False
+    if isinstance(error, str) and error.lower().startswith('movie not found'):
+        return True
+    raise MovieSourceUnavailable()
 
 
 def search_movies(query, page):
@@ -93,19 +123,27 @@ def search_movies(query, page):
     cached = cache.get(key)
     if cached is not None:
         return cached
-    if page == 1:
-        data = _get('/title/v2/find', {
-            'title': query,
-            'limit': SEARCH_LIMIT,
-            'sortArg': 'moviemeter,asc',
-        }) or {}
-        results = [_summary(row) for row in data.get('results', []) if _is_movie(row)]
-    else:
+    data = _omdb_get({'s': query, 'page': page})
+    if data is None or _omdb_not_found(data):
+        total_results = 0
+        total_pages = 1
         results = []
+    else:
+        raw_results = data.get('Search') or []
+        if not isinstance(raw_results, list):
+            raise MovieSourceUnavailable()
+        try:
+            total_results = int(data.get('totalResults', 0))
+        except (TypeError, ValueError):
+            raise MovieSourceUnavailable()
+        if total_results < 0:
+            raise MovieSourceUnavailable()
+        total_pages = max(1, (total_results + SEARCH_LIMIT - 1) // SEARCH_LIMIT)
+        results = [_summary(row) for row in raw_results if isinstance(row, dict) and _is_movie(row)]
     payload = {
         'page': page,
-        'total_pages': 1,
-        'total_results': len(results),
+        'total_pages': total_pages,
+        'total_results': total_results,
         'results': results,
     }
     cache.set(key, payload, settings.RAPIDAPI_CACHE_SECONDS)
@@ -113,25 +151,48 @@ def search_movies(query, page):
 
 
 def fetch_film_detail(film_id):
-    overview = _get('/title/get-overview-details', {'tconst': film_id}) or {}
-    title = overview.get('title')
-    if not isinstance(title, dict):
+    detail = _omdb_get({'i': film_id, 'plot': 'full'})
+    if detail is None or _omdb_not_found(detail):
         raise FilmNotFound()
-    credits = _get('/title/get-full-credits', {'tconst': film_id}) or {}
+    title = detail.get('Title')
+    if not title:
+        raise FilmNotFound()
 
     return {
         'film_id': film_id,
-        'title': title.get('title') or '',
-        'year': title.get('year'),
-        'overview': (
-            (overview.get('plotSummary') or overview.get('plotOutline') or {}).get('text') or ''
-        ),
-        'runtime': title.get('runningTimeInMinutes'),
-        'genres': [genre for genre in overview.get('genres') or [] if isinstance(genre, str)],
-        'director': _director(credits),
-        'poster_url': (title.get('image') or {}).get('url'),
-        'rating': (overview.get('ratings') or {}).get('rating'),
+        'title': title,
+        'year': _year(detail.get('Year')),
+        'overview': '' if detail.get('Plot') in (None, 'N/A') else detail.get('Plot'),
+        'runtime': _runtime(detail.get('Runtime')),
+        'genres': _genres(detail.get('Genre')),
+        'director': _first(detail.get('Director')),
+        'poster_url': _poster(detail.get('Poster')),
+        'rating': _float(detail.get('imdbRating')),
     }
+
+
+def _runtime(value):
+    match = re.match(r'\s*(\d+)', str(value or ''))
+    return int(match.group(1)) if match else None
+
+
+def _genres(value):
+    if not isinstance(value, str) or value == 'N/A':
+        return []
+    return [genre.strip() for genre in value.split(',') if genre.strip()]
+
+
+def _first(value):
+    if not isinstance(value, str) or value == 'N/A':
+        return None
+    return value.split(',', 1)[0].strip() or None
+
+
+def _float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _watch_sources(film_id):

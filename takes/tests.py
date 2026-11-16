@@ -467,6 +467,15 @@ class TopicCreateTests(APITestCase):
         self.assertIn('takes/', response.json()['image_url'])
         self.assertEqual(Take.objects.get().tag, 'discussion')
 
+    def test_hot_take_tag_is_serialized_and_appears_in_explore(self):
+        response = self.post(body='A bold film opinion', tag='hot_take', film_id=FILM)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()['tag'], 'hot_take')
+
+        feed = self.client.get('/api/takes/explore/').json()
+        self.assertEqual(feed[0]['tag'], 'hot_take')
+        self.assertEqual(feed[0]['body'], 'A bold film opinion')
+
     def test_topic_needs_a_movie_or_a_photo(self):
         response = self.post(body='Just words', tag='question')
         self.assertEqual(response.status_code, 400)
@@ -544,6 +553,144 @@ class FriendAndOwnTakesTests(APITestCase):
         self.assertEqual(self.client.get('/api/takes/me/takes/').status_code, 401)
 
 
+class CommentStanceTests(APITestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.viewer = User.objects.create_user(username='viewer', password='pw-123456')
+        self.author = User.objects.create_user(username='author', password='pw-123456')
+        self.review = Take.objects.create(
+            tag=Tag.REVIEW,
+            author=self.author,
+            body='A review',
+            reaction='loved',
+        )
+        self.question = Take.objects.create(
+            tag=Tag.QUESTION,
+            author=self.author,
+            body='A question',
+        )
+        self.client.force_authenticate(self.viewer)
+
+    def comments_url(self, take):
+        return f'/api/takes/takes/{take.id}/comments/'
+
+    def test_review_comment_stance_is_saved_and_serialized_on_reads(self):
+        response = self.client.post(
+            self.comments_url(self.review),
+            {'body': 'You changed my mind', 'stance': 'changed_my_mind'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()['stance'], 'changed_my_mind')
+
+        comments = self.client.get(self.comments_url(self.review)).json()
+        self.assertEqual(comments[0]['stance'], 'changed_my_mind')
+        self.assertEqual(
+            TakeComment.objects.get().stance,
+            'changed_my_mind',
+        )
+
+    def test_comments_without_a_stance_remain_supported(self):
+        response = self.client.post(
+            self.comments_url(self.review),
+            {'body': 'A regular comment'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertIsNone(response.json()['stance'])
+        self.assertIsNone(
+            self.client.get(self.comments_url(self.review)).json()[0]['stance']
+        )
+
+    def test_review_author_may_comment_without_stance_but_cannot_cast_stance_vote(self):
+        self.client.force_authenticate(self.author)
+        response = self.client.post(
+            self.comments_url(self.review),
+            {'body': 'My own review', 'stance': 'changed_my_mind'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['code'], 'own_take')
+        self.assertFalse(TakeComment.objects.exists())
+        self.assertFalse(TakeVote.objects.filter(take=self.review).exists())
+
+        response = self.client.post(
+            self.comments_url(self.review),
+            {'body': 'A regular comment on my review'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertIsNone(response.json()['stance'])
+        self.assertFalse(TakeVote.objects.filter(take=self.review).exists())
+
+    def test_stance_activates_existing_take_vote_once_and_updates_counters(self):
+        TakeVote.objects.create(
+            take=self.review,
+            user=self.viewer,
+            kind='disagree_but_fair',
+        )
+        response = self.client.post(
+            self.comments_url(self.review),
+            {'body': 'Fair point', 'stance': 'disagree_but_fair'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            TakeVote.objects.filter(
+                take=self.review,
+                user=self.viewer,
+                kind='disagree_but_fair',
+            ).count(),
+            1,
+        )
+
+        item = next(
+            item for item in self.client.get('/api/takes/explore/').json()
+            if item['id'] == self.review.id
+        )
+        self.assertEqual(item['votes']['disagree_but_fair'], 1)
+        self.assertEqual(item['my_votes'], ['disagree_but_fair'])
+
+    def test_stance_is_rejected_for_non_review_take(self):
+        response = self.client.post(
+            self.comments_url(self.question),
+            {'body': 'Not a review comment', 'stance': 'changed_my_mind'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['code'], 'invalid_stance')
+        self.assertFalse(TakeComment.objects.exists())
+
+    def test_reply_cannot_have_a_stance(self):
+        parent = TakeComment.objects.create(
+            take=self.review,
+            author=self.author,
+            body='Top-level comment',
+        )
+        response = self.client.post(
+            self.comments_url(self.review),
+            {
+                'body': 'A reply',
+                'parent_id': parent.id,
+                'stance': 'changed_my_mind',
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['code'], 'invalid_stance')
+        self.assertEqual(TakeComment.objects.count(), 1)
+        self.assertFalse(TakeVote.objects.filter(take=self.review).exists())
+
+    def test_unknown_stance_is_rejected(self):
+        response = self.client.post(
+            self.comments_url(self.review),
+            {'body': 'Invalid stance', 'stance': 'maybe'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(TakeComment.objects.exists())
+
+
 class CommentVoteTests(APITestCase):
     def setUp(self):
         User = get_user_model()
@@ -610,3 +757,122 @@ class CommentVoteTests(APITestCase):
         comments = self.client.get(f'/api/takes/takes/{self.take.id}/comments/').json()
         self.assertTrue(comments[0]['is_mine'])
         self.assertEqual(comments[0]['my_vote'], None)
+
+
+class PollAndSceneTests(APITestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.viewer = User.objects.create_user(username='poll-viewer', password='pw-123456')
+        self.friend = User.objects.create_user(username='poll-friend', password='pw-123456')
+        self.client.force_authenticate(self.viewer)
+
+    def create(self, **payload):
+        return self.client.post('/api/takes/topics/', payload, format='json')
+
+    def test_poll_needs_no_movie_and_returns_options(self):
+        response = self.create(body='Best Nolan film?', tag='poll', options=['Memento', 'Inception'])
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body['tag'], 'poll')
+        self.assertEqual(body['film_id'], '')
+        self.assertEqual([option['label'] for option in body['poll_options']], ['Memento', 'Inception'])
+        self.assertEqual({option['votes'] for option in body['poll_options']}, {0})
+        self.assertIsNone(body['my_poll_option_id'])
+        self.assertFalse(body['spoiler'])
+
+    def test_poll_options_must_be_two_to_four_distinct_labels(self):
+        response = self.create(body='Pick one', tag='poll', options=['Only one'])
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['code'], 'poll_options_invalid')
+
+        response = self.create(body='Pick one', tag='poll', options=['Same', 'same'])
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['code'], 'poll_options_invalid')
+
+        response = self.create(body='Pick one', tag='poll', options=['a', 'b', 'c', 'd', 'e'])
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Take.objects.exists())
+
+    def test_blank_poll_options_are_dropped(self):
+        response = self.create(body='Pick one', tag='poll', options=['Yes', '  ', 'No'])
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual([option['label'] for option in response.json()['poll_options']], ['Yes', 'No'])
+
+        response = self.create(body='Pick one', tag='poll', options=['Yes', ' '])
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['code'], 'poll_options_invalid')
+
+    def test_voting_counts_once_per_viewer_and_can_change(self):
+        poll = self.create(body='Pick one', tag='poll', options=['Yes', 'No']).json()
+        yes, no = (option['id'] for option in poll['poll_options'])
+        url = f'/api/takes/takes/{poll["id"]}/poll/'
+
+        first = self.client.post(url, {'option_id': yes}, format='json')
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.json()['my_poll_option_id'], yes)
+
+        self.client.force_authenticate(self.friend)
+        self.client.post(url, {'option_id': no}, format='json')
+        self.client.force_authenticate(self.viewer)
+        changed = self.client.post(url, {'option_id': no}, format='json').json()
+
+        counts = {option['id']: option['votes'] for option in changed['poll_options']}
+        self.assertEqual(counts, {yes: 0, no: 2})
+        self.assertEqual(changed['my_poll_option_id'], no)
+
+    def test_vote_rejects_option_from_another_poll_and_non_polls(self):
+        first = self.create(body='First?', tag='poll', options=['A', 'B']).json()
+        second = self.create(body='Second?', tag='poll', options=['C', 'D']).json()
+        url = f'/api/takes/takes/{first["id"]}/poll/'
+
+        response = self.client.post(url, {'option_id': second['poll_options'][0]['id']}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['code'], 'invalid_option')
+
+        question = self.create(body='Why?', tag='question', film_id=FILM).json()
+        response = self.client.post(f'/api/takes/takes/{question["id"]}/poll/', {'option_id': 1}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['code'], 'not_a_poll')
+
+    def test_scene_needs_a_movie_and_a_scene_name(self):
+        response = self.create(body='Why it works', tag='scene', scene='The interrogation room')
+        self.assertEqual(response.json()['code'], 'scene_needs_film')
+
+        response = self.create(body='Why it works', tag='scene', film_id=FILM)
+        self.assertEqual(response.json()['code'], 'scene_required')
+        self.assertFalse(Take.objects.exists())
+
+    def test_scene_and_spoiler_fields_are_saved_and_appear_in_explore(self):
+        response = self.create(
+            body='Nothing moves but the dialogue.', tag='scene', film_id=FILM,
+            scene='The interrogation room', timecode='1h 12m', spoiler=True,
+        )
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body['scene'], 'The interrogation room')
+        self.assertEqual(body['timecode'], '1h 12m')
+        self.assertTrue(body['spoiler'])
+        self.assertEqual(body['poll_options'], [])
+
+        feed = self.client.get('/api/takes/explore/').json()
+        self.assertEqual(feed[0]['tag'], 'scene')
+        self.assertTrue(feed[0]['spoiler'])
+        self.assertEqual(feed[0]['scene'], 'The interrogation room')
+
+    def test_non_scene_topics_drop_scene_fields(self):
+        response = self.create(
+            body='A question', tag='question', film_id=FILM, scene='Ignored', timecode='0:10'
+        )
+        self.assertEqual(response.json()['scene'], '')
+        self.assertEqual(response.json()['timecode'], '')
+
+    def test_poll_accepts_repeated_multipart_options_from_the_app(self):
+        response = self.client.post(
+            '/api/takes/topics/',
+            {'body': 'Best Nolan film?', 'tag': 'poll', 'options': ['Memento', 'Inception'], 'spoiler': 'true'},
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual([option['label'] for option in body['poll_options']], ['Memento', 'Inception'])
+        self.assertTrue(body['spoiler'])

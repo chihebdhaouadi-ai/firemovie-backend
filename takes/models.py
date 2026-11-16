@@ -20,6 +20,9 @@ class Tag(models.TextChoices):
     REVIEW = 'review', 'Review'
     QUESTION = 'question', 'Question'
     DISCUSSION = 'discussion', 'Discussion'
+    HOT_TAKE = 'hot_take', 'Hot take'
+    POLL = 'poll', 'Poll'
+    SCENE = 'scene', 'Scene'
 
 
 class VoteKind(models.TextChoices):
@@ -29,6 +32,11 @@ class VoteKind(models.TextChoices):
     # Questions and discussions only; reviews keep the three reaction kinds above.
     LIKE = 'like', 'Like'
     DISLIKE = 'dislike', 'Dislike'
+
+
+class CommentStance(models.TextChoices):
+    CHANGED_MY_MIND = VoteKind.CHANGED_MY_MIND, 'Changed my mind'
+    DISAGREE_BUT_FAIR = VoteKind.DISAGREE_BUT_FAIR, 'Disagree but fair'
 
 
 TOPIC_VOTE_KINDS = (VoteKind.LIKE, VoteKind.DISLIKE)
@@ -63,6 +71,11 @@ class Take(models.Model):
     tag = models.CharField(max_length=16, choices=Tag.choices, default=Tag.REVIEW)
     body = models.TextField(max_length=280)
     image = models.FileField(upload_to='takes/', blank=True, null=True)
+    # Topics only: the body may give away the plot, so the app blurs it until tapped.
+    spoiler = models.BooleanField(default=False)
+    # Scene topics only: the moment being discussed and where it happens.
+    scene = models.CharField(max_length=120, blank=True, default='')
+    timecode = models.CharField(max_length=20, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -95,6 +108,35 @@ class TakeVote(models.Model):
         ]
 
 
+class PollOption(models.Model):
+    take = models.ForeignKey(Take, on_delete=models.CASCADE, related_name='poll_options')
+    label = models.CharField(max_length=80)
+    position = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        db_table = 'take_poll_options'
+        ordering = ['position', 'id']
+
+
+class PollVote(models.Model):
+    """A viewer's single choice on a poll. Changing it replaces the old choice."""
+
+    take = models.ForeignKey(Take, on_delete=models.CASCADE, related_name='poll_votes')
+    option = models.ForeignKey(PollOption, on_delete=models.CASCADE, related_name='votes')
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='poll_votes',
+    )
+    created_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'take_poll_votes'
+        constraints = [
+            UniqueConstraint(fields=['take', 'user'], name='poll_vote_unique_per_user'),
+        ]
+
+
 class TakeCommentVote(models.Model):
     """A like or dislike on a comment. A viewer holds at most one per comment."""
 
@@ -122,6 +164,13 @@ class TakeComment(models.Model):
         related_name='take_comments',
     )
     body = models.CharField(max_length=300)
+    stance = models.CharField(
+        max_length=24,
+        choices=CommentStance.choices,
+        null=True,
+        blank=True,
+        default=None,
+    )
     parent = models.ForeignKey(
         'self',
         on_delete=models.CASCADE,

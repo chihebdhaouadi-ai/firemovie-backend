@@ -263,13 +263,12 @@ class LegacyEndpointTests(ListApiTestCase):
             'status': 200,
         })
 
-    @override_settings(RAPIDAPI_KEY='test-key')
+    @override_settings(OMDB_API_KEY='test-key', RAPIDAPI_KEY='test-key')
     def test_legacy_lists_include_title_and_poster_from_detail(self):
         self.client.post('/api/film/add_watchlist_movies', {'imdbid': 'tt0111161'})
         routes = {
-            '/title/get-overview-details': SHAWSHANK_OVERVIEW,
+            'i=tt0111161': SHAWSHANK_DETAIL,
             '/shows/': {},
-            '/title/get-full-credits': SHAWSHANK_CREDITS,
         }
         with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes)):
             response = self.client.get('/api/film/get_watch_list_movies')
@@ -351,25 +350,35 @@ def fake_upstream(routes, calls=None):
     return opener
 
 
-SHAWSHANK_FIND = {'results': [
-    {
-        'id': '/title/tt0111161/', 'titleType': 'movie', 'year': 1994,
-        'title': 'The Shawshank Redemption', 'image': {'url': 'https://img/p.jpg'},
-    },
-    {'id': '/title/tt0944947/', 'titleType': 'tvSeries', 'title': 'Some Show'},
-]}
+SHAWSHANK_SEARCH = {
+    'Search': [
+        {
+            'Title': 'The Shawshank Redemption', 'Year': '1994',
+            'imdbID': 'tt0111161', 'Type': 'movie', 'Poster': 'https://img/p.jpg',
+        },
+        {
+            'Title': 'Some Show', 'Year': '2011', 'imdbID': 'tt0944947',
+            'Type': 'series', 'Poster': 'N/A',
+        },
+    ],
+    'totalResults': '1',
+    'Response': 'True',
+}
 
-SHAWSHANK_OVERVIEW = {'title': {
-    'title': 'The Shawshank Redemption', 'year': 1994,
-    'runningTimeInMinutes': 142,
-    'image': {'url': 'https://img/p.jpg'},
-}, 'genres': ['Drama'], 'ratings': {'rating': 9.3},
-    'plotSummary': {'text': 'Hope.'}}
+SHAWSHANK_DETAIL = {
+    'Title': 'The Shawshank Redemption',
+    'Year': '1994',
+    'Runtime': '142 min',
+    'Genre': 'Drama',
+    'Director': 'Frank Darabont',
+    'Poster': 'https://img/p.jpg',
+    'imdbRating': '9.3',
+    'Plot': 'Hope.',
+    'Response': 'True',
+}
 
-SHAWSHANK_CREDITS = {'crew': {'director': [{'name': 'Frank Darabont'}]}}
 
-
-@override_settings(RAPIDAPI_KEY='test-key')
+@override_settings(OMDB_API_KEY='test-key', RAPIDAPI_KEY='test-key')
 class CatalogTests(ListApiTestCase):
     def setUp(self):
         super().setUp()
@@ -386,7 +395,7 @@ class CatalogTests(ListApiTestCase):
 
     def test_search_keeps_only_movies_and_reports_in_lists(self):
         FilmEntry.objects.create(user=self.user, film_id='tt0111161', list_type='watched')
-        response = self.search('shaw', {'/title/v2/find': SHAWSHANK_FIND})
+        response = self.search('shaw', {'s=shaw&page=1': SHAWSHANK_SEARCH})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data['results']), 1)
         result = response.data['results'][0]
@@ -396,25 +405,46 @@ class CatalogTests(ListApiTestCase):
         self.assertEqual(result['poster_url'], 'https://img/p.jpg')
         self.assertEqual(result['in_lists'], ['watched'])
 
-    def test_search_sends_key_header_and_title_without_key_in_url(self):
+    def test_search_sends_omdb_query_parameters(self):
         calls = []
-        self.search('joker', {'/title/v2/find': {'results': []}}, calls)
+        self.search('joker', {'s=joker&page=1': {
+            'Search': [], 'totalResults': '0', 'Response': 'True',
+        }}, calls)
         request = calls[0]
-        self.assertEqual(request.get_header('X-rapidapi-key'), 'test-key')
-        self.assertEqual(request.get_header('X-rapidapi-host'), 'online-movie-database.p.rapidapi.com')
-        self.assertIn('title=joker', request.full_url)
-        self.assertNotIn('test-key', request.full_url)
+        self.assertEqual(request.full_url, 'https://www.omdbapi.com/?apikey=test-key&s=joker&page=1')
+        self.assertIsNone(request.get_header('X-rapidapi-key'))
 
-    def test_later_pages_are_empty_without_upstream_call(self):
+    def test_search_uses_requested_page_and_reports_pagination(self):
         calls = []
-        response = self.search('joker', {'/title/v2/find': SHAWSHANK_FIND}, calls, page=2)
-        self.assertEqual(response.data['results'], [])
-        self.assertEqual(response.data['total_pages'], 1)
-        self.assertEqual(calls, [])
+        second_page = {
+            'Search': [{
+                'Title': 'Second page film', 'Year': '2000', 'imdbID': 'tt0000002',
+                'Type': 'movie', 'Poster': 'N/A',
+            }],
+            'totalResults': '21',
+            'Response': 'True',
+        }
+        response = self.search('joker', {'s=joker&page=2': second_page}, calls, page=2)
+        self.assertEqual(response.data['page'], 2)
+        self.assertEqual(response.data['total_pages'], 3)
+        self.assertEqual(response.data['total_results'], 21)
+        self.assertEqual(response.data['results'][0]['film_id'], 'tt0000002')
+        self.assertIn('page=2', calls[0].full_url)
+
+    def test_search_no_match_keeps_success_response_shape(self):
+        response = self.search('no match', {
+            's=no+match&page=1': {'Response': 'False', 'Error': 'Movie not found!'},
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, {
+            'page': 1, 'total_pages': 1, 'total_results': 0, 'results': [],
+        })
 
     def test_search_responses_are_cached(self):
         calls = []
-        routes = {'/title/v2/find': {'results': []}}
+        routes = {'s=joker&page=1': {
+            'Search': [], 'totalResults': '0', 'Response': 'True',
+        }}
         self.search('joker', routes, calls)
         self.search('joker', routes, calls)
         self.assertEqual(len(calls), 1)
@@ -425,7 +455,7 @@ class CatalogTests(ListApiTestCase):
         self.assertEqual(response.data['code'], 'validation_error')
 
     def test_missing_key_returns_503(self):
-        with override_settings(RAPIDAPI_KEY=''):
+        with override_settings(OMDB_API_KEY=''):
             response = self.client.get('/api/films/search', {'q': 'joker'})
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.data['code'], 'movie_source_not_configured')
@@ -436,19 +466,16 @@ class CatalogTests(ListApiTestCase):
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.data['code'], 'movie_source_unavailable')
 
-    def test_rejected_key_returns_502(self):
-        error = HTTPError('https://rapidapi.com', 403, 'Forbidden', None, None)
-        with mock.patch('films.movie_source.urlopen', side_effect=error):
+    def test_omdb_rejected_key_returns_502(self):
+        routes = {'s=joker&page=1': {'Response': 'False', 'Error': 'Invalid API key!'}}
+        with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes)):
             response = self.client.get('/api/films/search', {'q': 'joker'})
         self.assertEqual(response.status_code, 502)
 
-    def test_detail_combines_overview_and_director(self):
-        routes = {
-            '/title/get-overview-details': SHAWSHANK_OVERVIEW,
-            '/shows/': {},
-            '/title/get-full-credits': SHAWSHANK_CREDITS,
-        }
-        with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes)):
+    def test_detail_uses_omdb_fields_and_request_parameters(self):
+        calls = []
+        routes = {'i=tt0111161': SHAWSHANK_DETAIL, '/shows/': {}}
+        with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes, calls)):
             response = self.client.get('/api/films/tt0111161/')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['film_id'], 'tt0111161')
@@ -460,16 +487,21 @@ class CatalogTests(ListApiTestCase):
         self.assertEqual(response.data['overview'], 'Hope.')
         self.assertEqual(response.data['poster_url'], 'https://img/p.jpg')
         self.assertEqual(response.data['in_lists'], [])
+        request = calls[0]
+        self.assertEqual(
+            request.full_url,
+            'https://www.omdbapi.com/?apikey=test-key&i=tt0111161&plot=full',
+        )
 
     def test_detail_for_unknown_imdb_id_is_404(self):
-        error = HTTPError('https://rapidapi.com', 404, 'Not Found', None, None)
-        with mock.patch('films.movie_source.urlopen', side_effect=error):
+        routes = {'i=tt9999999': {'Response': 'False', 'Error': 'Movie not found!'}}
+        with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes)):
             response = self.client.get('/api/films/tt9999999/')
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.data['code'], 'film_not_found')
 
     def test_detail_without_title_payload_is_404(self):
-        routes = {'/title/get-overview-details': {}, '/title/get-full-credits': {}}
+        routes = {'i=tt0111161': {'Response': 'False', 'Error': 'Movie not found!'}}
         with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes)):
             response = self.client.get('/api/films/tt0111161/')
         self.assertEqual(response.status_code, 404)
@@ -480,21 +512,17 @@ class CatalogTests(ListApiTestCase):
         self.assertEqual(response.status_code, 502)
 
     def test_detail_missing_key_returns_503(self):
-        with override_settings(RAPIDAPI_KEY=''):
+        with override_settings(OMDB_API_KEY=''):
             response = self.client.get('/api/films/tt0111161/')
         self.assertEqual(response.status_code, 503)
 
     def test_detail_responses_are_cached(self):
         calls = []
-        routes = {
-            '/title/get-overview-details': SHAWSHANK_OVERVIEW,
-            '/shows/': {},
-            '/title/get-full-credits': SHAWSHANK_CREDITS,
-        }
+        routes = {'i=tt0111161': SHAWSHANK_DETAIL, '/shows/': {}}
         with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes, calls)):
             self.client.get('/api/films/tt0111161/')
             self.client.get('/api/films/tt0111161/')
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 2)
 
     def test_detail_rejects_numeric_ids(self):
         response = self.client.get('/api/films/278/')
@@ -507,10 +535,18 @@ class CatalogTests(ListApiTestCase):
             {'type': 'poster', 'url': 'https://img/p.jpg', 'width': 1200, 'height': 1800},
         ]}
         routes = {'/title/get-images': images}
-        with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes)):
+        calls = []
+        with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes, calls)):
             response = self.client.get('/api/films/tt0111161/stills/')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['stills'], ['https://img/s1.jpg'])
+        request = calls[0]
+        self.assertIn('online-movie-database.p.rapidapi.com/title/get-images', request.full_url)
+        self.assertEqual(request.get_header('X-rapidapi-key'), 'test-key')
+        self.assertEqual(
+            request.get_header('X-rapidapi-host'),
+            'online-movie-database.p.rapidapi.com',
+        )
 
 
 def streaming_option(service_id, name, link, images=None):
@@ -532,7 +568,7 @@ STREAMING_OPTIONS = [
 ]
 
 
-@override_settings(RAPIDAPI_KEY='test-key', STREAMING_COUNTRY='us')
+@override_settings(OMDB_API_KEY='test-key', RAPIDAPI_KEY='test-key', STREAMING_COUNTRY='us')
 class WatchProvidersTests(ListApiTestCase):
     def setUp(self):
         super().setUp()
@@ -540,8 +576,7 @@ class WatchProvidersTests(ListApiTestCase):
 
     def detail(self, show, calls=None):
         routes = {
-            '/title/get-overview-details': SHAWSHANK_OVERVIEW,
-            '/title/get-full-credits': SHAWSHANK_CREDITS,
+            'i=tt0111161': SHAWSHANK_DETAIL,
             '/shows/': show,
         }
         with mock.patch('films.movie_source.urlopen', side_effect=fake_upstream(routes, calls)):
@@ -597,14 +632,13 @@ class CatalogAuthTests(APITestCase):
         self.assertEqual(self.client.get('/api/films/tt0111161/').status_code, 401)
 
 
-@override_settings(RAPIDAPI_KEY='test-key')
+@override_settings(OMDB_API_KEY='test-key', RAPIDAPI_KEY='test-key')
 class FilmRecordTests(ListApiTestCase):
     def setUp(self):
         super().setUp()
         cache.clear()
         self.routes = {
-            '/title/get-overview-details': SHAWSHANK_OVERVIEW,
-            '/title/get-full-credits': SHAWSHANK_CREDITS,
+            'i=tt0111161': SHAWSHANK_DETAIL,
             '/shows/': {},
         }
 

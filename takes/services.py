@@ -1,3 +1,4 @@
+from collections import Counter
 from datetime import timedelta
 
 from django.db import IntegrityError, transaction
@@ -11,7 +12,19 @@ from social.models import FriendRequest
 from .errors import TakeError
 from films.models import Film
 
-from .models import TOPIC_VOTE_KINDS, FilmReaction, Reaction, Tag, Take, TakeComment, TakeCommentVote, TakeVote, VoteKind
+from .models import (
+    TOPIC_VOTE_KINDS,
+    FilmReaction,
+    PollOption,
+    PollVote,
+    Reaction,
+    Tag,
+    Take,
+    TakeComment,
+    TakeCommentVote,
+    TakeVote,
+    VoteKind,
+)
 
 REACTION_KEYS = [choice.value for choice in Reaction]
 VOTE_KINDS = [choice.value for choice in VoteKind]
@@ -100,6 +113,7 @@ def _item(take, viewer, is_most_helpful=False):
     comment_count = getattr(take, 'comment_total', None)
     if comment_count is None:
         comment_count = take.comments.count()
+    poll_options, my_poll_option_id = _poll_fields(take, viewer)
     return {
         'id': take.id,
         'film_id': take.film_id,
@@ -116,7 +130,26 @@ def _item(take, viewer, is_most_helpful=False):
         'my_votes': my_votes,
         'comment_count': comment_count,
         'is_most_helpful': is_most_helpful,
+        'spoiler': take.spoiler,
+        'scene': take.scene,
+        'timecode': take.timecode,
+        'poll_options': poll_options,
+        'my_poll_option_id': my_poll_option_id,
     }
+
+
+def _poll_fields(take, viewer):
+    """Options with their vote counts, and the option the viewer picked (polls only)."""
+    if take.tag != Tag.POLL:
+        return [], None
+    votes = list(take.poll_votes.all())
+    counts = Counter(vote.option_id for vote in votes)
+    mine = next((vote.option_id for vote in votes if vote.user_id == viewer.id), None)
+    options = [
+        {'id': option.id, 'label': option.label, 'votes': counts.get(option.id, 0)}
+        for option in take.poll_options.all()
+    ]
+    return options, mine
 
 
 def takes_for_film(film_id, viewer):
@@ -194,6 +227,7 @@ def comment_item(comment, take, viewer):
         'author_name': comment.author.username,
         'parent_id': comment.parent_id,
         'body': comment.body,
+        'stance': comment.stance,
         'created_at': serializers.DateTimeField().to_representation(comment.created_at),
         'is_writer': comment.author_id == take.author_id,
         'is_mine': comment.author_id == viewer.id,
@@ -213,8 +247,17 @@ def comments_for_take(take, viewer):
     return [comment_item(comment, take, viewer) for comment in comments]
 
 
-def create_comment(take, user, body, parent=None):
-    comment = TakeComment.objects.create(take=take, author=user, body=body, parent=parent)
+def create_comment(take, user, body, parent=None, stance=None):
+    with transaction.atomic():
+        comment = TakeComment.objects.create(
+            take=take,
+            author=user,
+            body=body,
+            parent=parent,
+            stance=stance,
+        )
+        if stance is not None and parent is None and take.tag == Tag.REVIEW:
+            TakeVote.objects.get_or_create(take=take, user=user, kind=stance)
     return comment_item(comment, take, user)
 
 
@@ -266,19 +309,42 @@ def friend_activity_for_film(film_id, viewer):
     return rows
 
 
-def create_topic(user, body, tag, film_id='', image=None):
-    """A question or discussion, optionally about a film and/or with a photo."""
+def create_topic(user, body, tag, film_id='', image=None, options=None, scene='', timecode='', spoiler=False):
+    """A question, discussion, hot take, poll or scene, optionally about a film and/or with a photo."""
     try:
         with transaction.atomic():
             take = Take.objects.create(
                 film_id=film_id or '', author=user, reaction=None, tag=tag,
-                body=body, image=image or None,
+                body=body, image=image or None, spoiler=spoiler,
+                scene=scene or '', timecode=timecode or '',
             )
+            for position, label in enumerate(options or []):
+                PollOption.objects.create(take=take, label=label, position=position)
     except IntegrityError:
         raise TakeError(409, 'already_posted', 'Could not save your topic.')
     if film_id:
         try_stored_film(film_id)
     return _item(take, user)
+
+
+def vote_poll(take, user, option_id):
+    """Pick one option on a poll, replacing the viewer's earlier pick."""
+    if take.tag != Tag.POLL:
+        raise TakeError(400, 'not_a_poll', 'Only polls take a choice.')
+    option = take.poll_options.filter(id=option_id).first()
+    if option is None:
+        raise TakeError(400, 'invalid_option', 'Pick one of the options on this poll.')
+    PollVote.objects.update_or_create(take=take, user=user, defaults={'option': option})
+    return _item(_reload_take(take.id), user)
+
+
+def _reload_take(take_id):
+    return (
+        Take.objects.select_related('author')
+        .prefetch_related('votes', 'poll_options', 'poll_votes')
+        .annotate(comment_total=Count('comments'))
+        .get(id=take_id)
+    )
 
 
 def _feed_items(takes, viewer):
@@ -303,7 +369,7 @@ def explore_feed(viewer, limit=EXPLORE_LIMIT):
     """Newest takes, questions and discussions across every film."""
     takes = list(
         Take.objects.select_related('author')
-        .prefetch_related('votes')
+        .prefetch_related('votes', 'poll_options', 'poll_votes')
         .annotate(comment_total=Count('comments'))
         .order_by('-created_at', '-id')[:limit]
     )
