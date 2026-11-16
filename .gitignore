@@ -9,3 +9,7 @@ __pycache__/
 !.env.example
 media/
 staticfiles/
+
+# Local tooling output
+.DS_Store
+graphify-out/

@@ -1,0 +1,36 @@
+name: Feature
+description: New functionality.
+labels: ["type: feature", "status: needs triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or goal
+      description: Who needs this and why.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - [ ] …
+        - [ ] Tests added
+        - [ ] docs/api.md and Notion spec updated
+    validations:
+      required: true
+  - type: input
+    id: spec
+    attributes:
+      label: Notion spec link
+  - type: textarea
+    id: backend
+    attributes:
+      label: App changes needed
+      description: Flutter changes, with a link to the app issue.

@@ -1,0 +1,40 @@
+name: Bug report
+description: Something is broken or behaves wrongly.
+labels: ["type: bug", "status: needs triage"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open …
+        2. Tap …
+        3. See …
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Platform and build
+      placeholder: "local runserver, Heroku production, endpoint path"
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Impact
+      options:
+        - "P0 critical: crash, data loss or security"
+        - "P1 high: main flow broken"
+        - "P2 medium: works with a workaround"
+        - "P3 low: cosmetic"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Remove tokens, passwords and personal data first.
