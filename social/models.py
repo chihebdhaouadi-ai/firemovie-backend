@@ -54,6 +54,8 @@ class Notification(models.Model):
         FRIEND_REQUEST = 'friend_request', 'Friend request'
         FRIEND_ACCEPTED = 'friend_accepted', 'Friend request accepted'
         MOVIE_SUGGESTION = 'movie_suggestion', 'Movie suggestion'
+        TAKE_SHARED = 'take_shared', 'Take shared with you'
+        TAKE_MENTION = 'take_mention', 'Mentioned in a comment'
 
     recipient = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notifications',
@@ -68,6 +70,15 @@ class Notification(models.Model):
     suggestion = models.ForeignKey(
         MovieSuggestion, on_delete=models.CASCADE, null=True, blank=True, related_name='notifications',
     )
+    # Shares and mentions: the take to open, and the comment that tagged them.
+    take = models.ForeignKey(
+        'takes.Take', on_delete=models.CASCADE, null=True, blank=True, related_name='+',
+    )
+    comment = models.ForeignKey(
+        'takes.TakeComment', on_delete=models.CASCADE, null=True, blank=True, related_name='+',
+    )
+    # The sender's note on a shared take.
+    message = models.CharField(max_length=280, blank=True, default='')
     read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 

@@ -30,7 +30,8 @@ venv/bin/python manage.py runserver 127.0.0.1:8000
 - Landing page: `http://127.0.0.1:8000/`
 
 Without `RAPIDAPI_KEY` / `OMDB_API_KEY`, film search and detail return a
-`*_not_configured` error. Without `IMDB232_RAPIDAPI_KEY` the news feed is empty. Without
+`*_not_configured` error. Without `WATCHMODE_API_KEY`, the browse lists
+(`/api/films/browse/`, `/api/films/providers/`) return the same error. Without `IMDB232_RAPIDAPI_KEY` the news feed is empty. Without
 `OPENROUTER_API_KEY` translation is disabled.
 
 ## Environment

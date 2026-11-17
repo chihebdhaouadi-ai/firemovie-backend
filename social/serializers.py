@@ -8,7 +8,7 @@ from .models import MovieSuggestion, Notification
 class UserCardSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ('id', 'username', 'avatar')
+        fields = ('id', 'username', 'avatar', 'equipped_frame')
 
 
 class MovieSuggestionPayloadSerializer(serializers.ModelSerializer):
@@ -17,17 +17,36 @@ class MovieSuggestionPayloadSerializer(serializers.ModelSerializer):
         fields = ('film_id', 'film_title', 'film_year', 'film_poster_url', 'comment')
 
 
+TAKE_PREVIEW_LENGTH = 140
+
+
 class NotificationSerializer(serializers.ModelSerializer):
     actor = UserCardSerializer(read_only=True)
     friend_request_id = serializers.IntegerField(read_only=True)
     suggestion = MovieSuggestionPayloadSerializer(read_only=True)
+    take = serializers.SerializerMethodField()
+    comment_id = serializers.IntegerField(read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = Notification
         fields = (
-            'id', 'kind', 'actor', 'friend_request_id', 'suggestion', 'read', 'created_at',
+            'id', 'kind', 'actor', 'friend_request_id', 'suggestion', 'take', 'comment_id',
+            'message', 'read', 'created_at',
         )
+
+    def get_take(self, notification):
+        """Where a share or mention leads: enough to open the take's page."""
+        take = notification.take
+        if take is None:
+            return None
+        return {
+            'id': take.id,
+            'film_id': take.film_id,
+            'tag': take.tag,
+            'body': take.body[:TAKE_PREVIEW_LENGTH],
+            'spoiler': take.spoiler,
+        }
 
 
 class FriendRequestCreateSerializer(serializers.Serializer):

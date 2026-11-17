@@ -7,6 +7,10 @@ All notable changes to the FilmSage backend. Format:
 ## [Unreleased]
 
 ### Added
+- Messaging app (`/api/messaging/`): direct chats between friends, groups and
+  private topics, with unread counts.
+- `GET /api/takes/friends/stories/`: friends' takes and comments from the last week
+  as story groups.
 - Project documentation: README, AGENTS.md, CONTRIBUTING.md, `docs/` (architecture, API,
   tech debt).
 - GitHub issue and pull request templates; CI runs on pushes and pull requests.

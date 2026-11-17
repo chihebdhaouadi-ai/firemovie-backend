@@ -136,7 +136,7 @@ def cancel_request(request, request_id):
 @permission_classes([IsAuthenticated])
 def notifications(request):
     mine = Notification.objects.filter(recipient=request.user)
-    items = mine.select_related('actor', 'suggestion')[:NOTIFICATIONS_LIMIT]
+    items = mine.select_related('actor', 'suggestion', 'take')[:NOTIFICATIONS_LIMIT]
     return Response({
         'unread_count': mine.filter(read=False).count(),
         'results': NotificationSerializer(items, many=True, context={'request': request}).data,

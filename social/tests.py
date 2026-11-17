@@ -24,7 +24,7 @@ class UserSearchTests(SocialTestBase):
         self.client.force_authenticate(self.me)
         response = self.client.get('/api/social/users/search', {'q': 'AL'})
         self.assertEqual([u['username'] for u in response.data], ['albert'])
-        self.assertEqual(set(response.data[0]), {'id', 'username', 'avatar'})
+        self.assertEqual(set(response.data[0]), {'id', 'username', 'avatar', 'equipped_frame'})
 
 
 class FriendRequestTests(SocialTestBase):

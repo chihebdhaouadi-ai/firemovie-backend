@@ -168,9 +168,16 @@ def progress_for(user):
         .annotate(total=Count('id'))
     )
     kinds = {row['kind']: row['total'] for row in kind_rows}
-    well_argued = kinds.get(VoteKind.WELL_ARGUED, 0)
-    changed_my_mind = kinds.get(VoteKind.CHANGED_MY_MIND, 0)
-    disagree_but_fair = kinds.get(VoteKind.DISAGREE_BUT_FAIR, 0)
+    # Up votes earn the well-argued badge; draws, the disagree-but-fair one.
+    well_argued = kinds.get(VoteKind.UP, 0)
+    disagree_but_fair = kinds.get(VoteKind.DRAW, 0)
+    changed_my_mind = (
+        TakeComment.objects.filter(
+            take__author=user, take__tag=Tag.REVIEW, parent__isnull=True, stance=VoteKind.CHANGED_MY_MIND,
+        )
+        .exclude(author=user)
+        .count()
+    )
     first_takes = (
         Take.objects.filter(author=user, tag=Tag.REVIEW)
         .exclude(film_id='')
