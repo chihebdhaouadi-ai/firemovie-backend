@@ -17,5 +17,6 @@ class ConversationAdmin(admin.ModelAdmin):
 
 @admin.register(Message)
 class MessageAdmin(admin.ModelAdmin):
-    list_display = ('id', 'conversation', 'sender', 'created_at')
+    list_display = ('id', 'conversation', 'sender', 'kind', 'pinned', 'created_at')
+    list_filter = ('kind',)
     search_fields = ('body',)

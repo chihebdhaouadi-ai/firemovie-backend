@@ -1,3 +1,6 @@
+from collections import Counter
+from datetime import timedelta
+
 from django.db import transaction
 from django.db.models import Count, OuterRef, Q, Subquery
 from django.utils import timezone
@@ -6,11 +9,17 @@ from rest_framework.exceptions import APIException
 from accounts.models import User
 from takes.services import friend_ids
 
-from .models import Conversation, Membership, Message
+from .models import Ballot, Conversation, GroupVote, Membership, Message, PollVote, Reaction
 
 MAX_TITLE = 60
+MAX_DESCRIPTION = 300
 MAX_BODY = 2000
 MESSAGES_PAGE = 100
+VOTE_LENGTH = timedelta(hours=24)
+MAX_REACTION = 16
+MAX_POLL_OPTION = 80
+# Reactions anyone may use on a post that does not limit them.
+MEDIA_KINDS = {Message.Kind.PHOTO, Message.Kind.VIDEO}
 
 
 class MessagingError(APIException):
@@ -53,19 +62,36 @@ def open_direct(user, other_id):
     return conversation
 
 
-def create_group(user, kind, title, member_ids):
-    """A group or private topic with the creator and the chosen friends."""
-    if kind not in (Conversation.Kind.GROUP, Conversation.Kind.TOPIC):
-        raise MessagingError(400, 'invalid_kind', 'Unknown conversation kind.')
+def _clean_title(title):
     title = (title or '').strip()
     if not title:
         raise MessagingError(400, 'title_required', 'Give it a name.')
     if len(title) > MAX_TITLE:
         raise MessagingError(400, 'title_too_long', f'Names are at most {MAX_TITLE} characters.')
+    return title
+
+
+def _clean_description(description):
+    description = (description or '').strip()
+    if len(description) > MAX_DESCRIPTION:
+        raise MessagingError(
+            400, 'description_too_long', f'Descriptions are at most {MAX_DESCRIPTION} characters.'
+        )
+    return description
+
+
+def create_group(user, kind, title, member_ids, description=''):
+    """A group or private topic with the creator and the chosen friends."""
+    if kind not in (Conversation.Kind.GROUP, Conversation.Kind.TOPIC):
+        raise MessagingError(400, 'invalid_kind', 'Unknown conversation kind.')
+    title = _clean_title(title)
+    description = _clean_description(description)
     ids = {int(i) for i in member_ids or []} - {user.id}
     _require_friends(user, ids)
     with transaction.atomic():
-        conversation = Conversation.objects.create(kind=kind, title=title, created_by=user)
+        conversation = Conversation.objects.create(
+            kind=kind, title=title, description=description, created_by=user
+        )
         Membership.objects.bulk_create(
             [Membership(conversation=conversation, user=user)]
             + [Membership(conversation=conversation, user_id=i) for i in ids]
@@ -84,29 +110,355 @@ def membership_of(user, conversation_id):
     return membership
 
 
-def send_message(user, conversation_id, body):
-    membership = membership_of(user, conversation_id)
-    body = (body or '').strip()
-    if not body:
-        raise MessagingError(400, 'empty_message', 'Write something first.')
-    if len(body) > MAX_BODY:
-        raise MessagingError(400, 'message_too_long', f'Messages are at most {MAX_BODY} characters.')
-    with transaction.atomic():
-        message = Message.objects.create(
-            conversation_id=conversation_id, sender=user, body=body
-        )
-        Conversation.objects.filter(pk=conversation_id).update(updated_at=message.created_at)
-        # Your own message counts as read.
+def update_group(user, conversation_id, title=None, description=None, photo=None):
+    """Renames a group or topic, or changes its description or photo. Any
+    member may do it; direct chats have none of these."""
+    conversation = membership_of(user, conversation_id).conversation
+    if conversation.kind == Conversation.Kind.DIRECT:
+        raise MessagingError(400, 'direct_chat', 'Direct chats have no name or photo.')
+    fields = []
+    if title is not None:
+        conversation.title = _clean_title(title)
+        fields.append('title')
+    if description is not None:
+        conversation.description = _clean_description(description)
+        fields.append('description')
+    if photo is not None:
+        if conversation.photo:
+            conversation.photo.delete(save=False)
+        conversation.photo = photo
+        fields.append('photo')
+    if fields:
+        conversation.save(update_fields=fields)
+    return conversation
+
+
+def _post(conversation_id, sender, membership=None, **fields):
+    """Saves a message, moves the chat to the top and, for the sender's own
+    messages, marks the chat as read."""
+    message = Message.objects.create(conversation_id=conversation_id, sender=sender, **fields)
+    Conversation.objects.filter(pk=conversation_id).update(updated_at=message.created_at)
+    if membership is not None:
         membership.last_read_at = message.created_at
         membership.save(update_fields=['last_read_at'])
     return message
 
 
+def _system(conversation_id, actor, event, target=None):
+    payload = {'event': event}
+    if target is not None:
+        payload['target'] = target.username
+    return _post(conversation_id, actor, kind=Message.Kind.SYSTEM, payload=payload)
+
+
+def _clean_reactions(allowed):
+    allowed = [str(e).strip() for e in (allowed or []) if str(e).strip()]
+    if any(len(e) > MAX_REACTION for e in allowed):
+        raise MessagingError(400, 'invalid_reaction', 'That is not an emoji.')
+    return list(dict.fromkeys(allowed))[:10]
+
+
+def _clean_payload(kind, payload):
+    payload = payload or {}
+    if kind == Message.Kind.GIF:
+        name = str(payload.get('gif', '')).strip()[:40]
+        if not name:
+            raise MessagingError(400, 'invalid_gif', 'Pick a GIF.')
+        return {'gif': name}
+    if kind == Message.Kind.STICKER:
+        sticker = str(payload.get('sticker', '')).strip()
+        if not sticker or len(sticker) > MAX_REACTION:
+            raise MessagingError(400, 'invalid_sticker', 'Pick a sticker.')
+        return {'sticker': sticker}
+    if kind == Message.Kind.MOVIE:
+        movie = payload.get('movie') or {}
+        title = str(movie.get('title', '')).strip()[:200]
+        if not title:
+            raise MessagingError(400, 'invalid_movie', 'Pick a movie.')
+        return {'movie': {
+            'id': movie.get('id'),
+            'title': title,
+            'year': str(movie.get('year') or '')[:4],
+            'poster': str(movie.get('poster') or '')[:500] or None,
+        }}
+    if kind == Message.Kind.POLL:
+        poll = payload.get('poll') or {}
+        question = str(poll.get('question', '')).strip()[:200]
+        options = [str(o).strip()[:MAX_POLL_OPTION] for o in poll.get('options') or []]
+        options = [o for o in options if o]
+        if not question or not 2 <= len(options) <= 4:
+            raise MessagingError(400, 'invalid_poll', 'Add a question and two to four options.')
+        return {'poll': {'question': question, 'options': options}}
+    return {}
+
+
+def send_message(user, conversation_id, body, kind=Message.Kind.TEXT, reply_to=None,
+                 payload=None, attachment=None, allowed_reactions=None):
+    """A text, GIF, sticker, photo, video, movie card or poll, optionally
+    replying to another message of the same chat."""
+    membership = membership_of(user, conversation_id)
+    body = (body or '').strip()
+    if kind == Message.Kind.SYSTEM or kind not in Message.Kind.values:
+        raise MessagingError(400, 'invalid_kind', 'Unknown message kind.')
+    if kind == Message.Kind.TEXT and not body:
+        raise MessagingError(400, 'empty_message', 'Write something first.')
+    if len(body) > MAX_BODY:
+        raise MessagingError(400, 'message_too_long', f'Messages are at most {MAX_BODY} characters.')
+    if kind in MEDIA_KINDS and not attachment:
+        raise MessagingError(400, 'file_required', 'Choose a file first.')
+    if kind not in MEDIA_KINDS:
+        attachment = None
+    parent = None
+    if reply_to is not None:
+        parent = Message.objects.filter(pk=reply_to, conversation_id=conversation_id).first()
+        if parent is None:
+            raise MessagingError(400, 'invalid_reply', 'That message is not in this chat.')
+    with transaction.atomic():
+        message = _post(
+            conversation_id,
+            user,
+            membership,
+            kind=kind,
+            body=body,
+            reply_to=parent,
+            payload=_clean_payload(kind, payload),
+            attachment=attachment,
+            allowed_reactions=_clean_reactions(allowed_reactions),
+        )
+    return message
+
+
+def _message_in_my_chat(user, message_id):
+    message = Message.objects.select_related('conversation').filter(pk=message_id).first()
+    if message is None or not Membership.objects.filter(
+        conversation_id=message.conversation_id, user=user
+    ).exists():
+        raise MessagingError(404, 'not_found', 'Message not found.')
+    return message
+
+
+def toggle_reaction(user, message_id, emoji):
+    """Adds the reaction, or takes it back if it is already yours."""
+    message = _message_in_my_chat(user, message_id)
+    emoji = (emoji or '').strip()
+    if not emoji or len(emoji) > MAX_REACTION or message.kind == Message.Kind.SYSTEM:
+        raise MessagingError(400, 'invalid_reaction', 'That is not an emoji.')
+    if message.allowed_reactions and emoji not in message.allowed_reactions:
+        raise MessagingError(400, 'reaction_not_allowed', 'This post does not allow that reaction.')
+    existing = Reaction.objects.filter(message=message, user=user, emoji=emoji)
+    if existing.exists():
+        existing.delete()
+    else:
+        Reaction.objects.create(message=message, user=user, emoji=emoji)
+    return message
+
+
+def vote_poll(user, message_id, option):
+    """One choice per member; voting for your current choice removes it."""
+    message = _message_in_my_chat(user, message_id)
+    if message.kind != Message.Kind.POLL:
+        raise MessagingError(400, 'not_a_poll', 'That message is not a poll.')
+    options = message.payload.get('poll', {}).get('options', [])
+    if not 0 <= option < len(options):
+        raise MessagingError(400, 'invalid_option', 'Unknown option.')
+    current = PollVote.objects.filter(message=message, user=user).first()
+    if current is not None and current.option == option:
+        current.delete()
+    elif current is not None:
+        current.option = option
+        current.save(update_fields=['option'])
+    else:
+        PollVote.objects.create(message=message, user=user, option=option)
+    return message
+
+
+def _require_owner(user, conversation):
+    if conversation.kind == Conversation.Kind.DIRECT:
+        raise MessagingError(400, 'direct_chat', 'Direct chats have no owner.')
+    if conversation.created_by_id != user.id:
+        raise MessagingError(403, 'not_owner', 'Only the group creator can do that.')
+
+
+def toggle_pin(user, message_id):
+    message = _message_in_my_chat(user, message_id)
+    _require_owner(user, message.conversation)
+    if message.kind == Message.Kind.SYSTEM:
+        raise MessagingError(400, 'invalid_pin', 'System lines cannot be pinned.')
+    with transaction.atomic():
+        message.pinned = not message.pinned
+        message.save(update_fields=['pinned'])
+        if message.pinned:
+            _system(message.conversation_id, user, 'pinned')
+    return message
+
+
+def _member(conversation, user_id):
+    membership = Membership.objects.select_related('user').filter(
+        conversation=conversation, user_id=user_id
+    ).first()
+    if membership is None:
+        raise MessagingError(404, 'not_member', 'That person is not in this group.')
+    return membership
+
+
+def remove_member(user, conversation_id, user_id):
+    conversation = membership_of(user, conversation_id).conversation
+    _require_owner(user, conversation)
+    if user_id == user.id:
+        raise MessagingError(400, 'self_remove', 'Leave the group instead.')
+    target = _member(conversation, user_id)
+    with transaction.atomic():
+        target.delete()
+        Ballot.objects.filter(vote__conversation=conversation, user_id=user_id).delete()
+        Ballot.objects.filter(vote__conversation=conversation, choice=str(user_id)).delete()
+        _system(conversation.id, user, 'removed', target.user)
+    return conversation
+
+
+def make_heritage(user, conversation_id, user_id):
+    """Hands the group to another member, who becomes Heritage creator; the
+    old creator stays as a regular member."""
+    conversation = membership_of(user, conversation_id).conversation
+    _require_owner(user, conversation)
+    if user_id == user.id:
+        raise MessagingError(400, 'already_owner', 'You already own this group.')
+    target = _member(conversation, user_id)
+    with transaction.atomic():
+        _hand_over(conversation, target.user)
+        GroupVote.objects.filter(conversation=conversation).delete()
+        _system(conversation.id, user, 'heritage', target.user)
+    return conversation
+
+
+def _hand_over(conversation, new_owner):
+    conversation.created_by = new_owner
+    conversation.heritage = True
+    conversation.save(update_fields=['created_by', 'heritage'])
+
+
+def leave(user, conversation_id, pass_to=None):
+    """Leaves a group. The creator must hand it over first ([pass_to]) or
+    start a group vote instead; the last member out deletes the group."""
+    membership = membership_of(user, conversation_id)
+    conversation = membership.conversation
+    if conversation.kind == Conversation.Kind.DIRECT:
+        raise MessagingError(400, 'direct_chat', 'You cannot leave a direct chat.')
+    if GroupVote.objects.filter(conversation=conversation).exists() and conversation.created_by_id == user.id:
+        raise MessagingError(400, 'vote_running', 'A vote is already running.')
+    others = Membership.objects.filter(conversation=conversation).exclude(user=user)
+    with transaction.atomic():
+        if not others.exists():
+            conversation.delete()
+            return None
+        if conversation.created_by_id == user.id:
+            if pass_to is None:
+                raise MessagingError(400, 'owner_must_choose', 'Pass the creator tag or start a vote first.')
+            new_owner = _member(conversation, pass_to).user
+            if new_owner.id == user.id:
+                raise MessagingError(400, 'already_owner', 'Pick someone else.')
+            _hand_over(conversation, new_owner)
+            membership.delete()
+            _system(conversation.id, user, 'passed', new_owner)
+        else:
+            membership.delete()
+            _system(conversation.id, user, 'left')
+    return conversation
+
+
+def start_vote(user, conversation_id):
+    conversation = membership_of(user, conversation_id).conversation
+    _require_owner(user, conversation)
+    if GroupVote.objects.filter(conversation=conversation).exists():
+        raise MessagingError(400, 'vote_running', 'A vote is already running.')
+    with transaction.atomic():
+        GroupVote.objects.create(
+            conversation=conversation, started_by=user, ends_at=timezone.now() + VOTE_LENGTH
+        )
+        _system(conversation.id, user, 'vote_started')
+    return conversation
+
+
+def cancel_vote(user, conversation_id):
+    conversation = membership_of(user, conversation_id).conversation
+    vote = GroupVote.objects.filter(conversation=conversation, started_by=user).first()
+    if vote is None:
+        raise MessagingError(404, 'no_vote', 'There is no vote of yours to cancel.')
+    with transaction.atomic():
+        vote.delete()
+        _system(conversation.id, user, 'vote_cancelled')
+    return conversation
+
+
+def cast_ballot(user, conversation_id, choice):
+    conversation = membership_of(user, conversation_id).conversation
+    settle_votes([conversation.id])
+    vote = GroupVote.objects.filter(conversation_id=conversation.id).first()
+    if vote is None:
+        raise MessagingError(404, 'no_vote', 'There is no vote running.')
+    choice = str(choice)
+    if vote.stage == GroupVote.Stage.KEEP:
+        if vote.started_by_id == user.id:
+            raise MessagingError(400, 'own_vote', 'You cannot vote on your own poll.')
+        if choice not in ('stay', 'delete'):
+            raise MessagingError(400, 'invalid_choice', 'Vote Stay or Delete.')
+    else:
+        if choice == str(user.id) or choice == str(vote.started_by_id):
+            raise MessagingError(400, 'invalid_choice', 'Pick another member.')
+        if not Membership.objects.filter(conversation_id=conversation.id, user_id=choice).exists():
+            raise MessagingError(400, 'invalid_choice', 'That person is not in this group.')
+    Ballot.objects.update_or_create(vote=vote, user=user, defaults={'choice': choice})
+    return conversation
+
+
+def settle_votes(conversation_ids):
+    """Closes the votes whose 24 hours are over: the first stage deletes the
+    group or opens the owner vote; the second hands the group to the winner
+    and the creator who asked to leave leaves."""
+    now = timezone.now()
+    for vote in GroupVote.objects.filter(conversation_id__in=conversation_ids, ends_at__lte=now).select_related(
+        'conversation', 'started_by'
+    ):
+        with transaction.atomic():
+            tally = Counter(vote.ballots.values_list('choice', flat=True))
+            conversation = vote.conversation
+            if vote.stage == GroupVote.Stage.KEEP:
+                if tally['delete'] > tally['stay']:
+                    conversation.delete()
+                    continue
+                vote.ballots.all().delete()
+                vote.stage = GroupVote.Stage.OWNER
+                vote.ends_at = now + VOTE_LENGTH
+                vote.save(update_fields=['stage', 'ends_at'])
+                _system(conversation.id, vote.started_by, 'vote_keep')
+                continue
+            candidates = list(
+                Membership.objects.filter(conversation=conversation)
+                .exclude(user=vote.started_by)
+                .order_by('joined_at', 'id')
+                .select_related('user')
+            )
+            if not candidates:
+                vote.delete()
+                continue
+            # Most votes wins; a tie goes to whoever joined first.
+            winner = max(candidates, key=lambda m: tally[str(m.user_id)]).user
+            _hand_over(conversation, winner)
+            vote.delete()
+            Membership.objects.filter(conversation=conversation, user=vote.started_by).delete()
+            _system(conversation.id, vote.started_by, 'left')
+            _system(conversation.id, vote.started_by, 'vote_owner_won', winner)
+
+
 def messages(user, conversation_id, after=None):
     """Messages of a conversation, oldest first (the newest page, or only
     those after message [after]). Reading them marks the chat as read."""
+    settle_votes([conversation_id])
     membership = membership_of(user, conversation_id)
-    queryset = Message.objects.select_related('sender').filter(conversation_id=conversation_id)
+    queryset = (
+        Message.objects.select_related('sender', 'reply_to__sender')
+        .prefetch_related('reactions', 'poll_votes')
+        .filter(conversation_id=conversation_id)
+    )
     if after is not None:
         rows = list(queryset.filter(id__gt=after).order_by('id')[:MESSAGES_PAGE])
     else:
@@ -120,6 +472,7 @@ def messages(user, conversation_id, after=None):
 def conversations(user):
     """The user's conversations, most recently active first, each with its
     members, last message and how many messages are unread."""
+    settle_votes(Membership.objects.filter(user=user).values_list('conversation_id', flat=True))
     memberships = Membership.objects.filter(user=user).select_related('conversation')
     convo_ids = [m.conversation_id for m in memberships]
     if not convo_ids:
@@ -134,14 +487,14 @@ def conversations(user):
     convos = list(
         Conversation.objects.filter(pk__in=convo_ids)
         .annotate(last_message_id=Subquery(last_ids))
-        .prefetch_related('memberships__user')
+        .prefetch_related('memberships__user', 'vote__ballots')
         .order_by('-updated_at', '-id')
     )
     last_messages = {
         m.id: m
-        for m in Message.objects.select_related('sender').filter(
-            id__in=[c.last_message_id for c in convos if c.last_message_id]
-        )
+        for m in Message.objects.select_related('sender', 'reply_to__sender')
+        .prefetch_related('reactions', 'poll_votes')
+        .filter(id__in=[c.last_message_id for c in convos if c.last_message_id])
     }
 
     unread_filter = Q()
