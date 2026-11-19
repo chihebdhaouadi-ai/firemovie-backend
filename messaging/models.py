@@ -45,6 +45,14 @@ class Membership(models.Model):
     )
     last_read_at = models.DateTimeField(null=True, blank=True)
     joined_at = models.DateTimeField(auto_now_add=True)
+    # This member's own settings for the chat.
+    muted = models.BooleanField(default=False)
+    pinned = models.BooleanField(default=False)
+    marked_unread = models.BooleanField(default=False)
+    # Messages up to this moment are hidden for this member ("Clear history").
+    cleared_at = models.DateTimeField(null=True, blank=True)
+    # "Delete chat" on a direct chat: gone from the inbox until a new message.
+    hidden = models.BooleanField(default=False)
 
     class Meta:
         db_table = 'conversation_members'
@@ -85,6 +93,9 @@ class Message(models.Model):
     # Posts may limit reactions to these emojis; empty means any.
     allowed_reactions = models.JSONField(default=list, blank=True)
     pinned = models.BooleanField(default=False)
+    edited_at = models.DateTimeField(null=True, blank=True)
+    # Deleted for everyone: the content is gone, a placeholder stays.
+    deleted = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
@@ -144,3 +155,40 @@ class Ballot(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['vote', 'user'], name='unique_vote_ballot'),
         ]
+
+
+class Block(models.Model):
+    """[blocker] blocked [blocked]: neither can message the other in their
+    direct chat until it is lifted."""
+
+    blocker = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='blocks_made')
+    blocked = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='blocks_received')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'user_blocks'
+        constraints = [
+            models.UniqueConstraint(fields=['blocker', 'blocked'], name='unique_user_block'),
+        ]
+
+
+class Report(models.Model):
+    """A member reported a chat or one of its messages, for moderators."""
+
+    class Reason(models.TextChoices):
+        SPAM = 'spam', 'Spam'
+        HARASSMENT = 'harassment', 'Harassment'
+        HATE = 'hate', 'Hate speech'
+        NSFW = 'nsfw', 'Sexual content'
+        OTHER = 'other', 'Something else'
+
+    reporter = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='chat_reports')
+    conversation = models.ForeignKey(Conversation, on_delete=models.SET_NULL, null=True, related_name='reports')
+    message = models.ForeignKey(Message, on_delete=models.SET_NULL, null=True, blank=True, related_name='reports')
+    reason = models.CharField(max_length=12, choices=Reason.choices)
+    details = models.TextField(max_length=500, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'chat_reports'
+        ordering = ['-created_at']

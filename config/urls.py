@@ -1,7 +1,8 @@
 from django.conf import settings
-from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import include, path, re_path
+
+from .dev_media import serve_media
 
 urlpatterns = [
     path('', include('landing.urls')),
@@ -17,4 +18,15 @@ urlpatterns = [
     path('api/upcoming/', include('upcoming.urls')),
     path('api/messaging/', include('messaging.urls')),
     path('articles/', include('articles.urls')),
-] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+]
+
+# Local development: uploaded files, with byte ranges so videos play. In
+# production they come from S3.
+if settings.DEBUG:
+    urlpatterns += [
+        re_path(
+            r'^%s(?P<path>.*)$' % settings.MEDIA_URL.lstrip('/'),
+            serve_media,
+            {'document_root': settings.MEDIA_ROOT},
+        ),
+    ]

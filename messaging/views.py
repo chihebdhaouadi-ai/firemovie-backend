@@ -56,13 +56,15 @@ def _message(message, request):
         'id': message.id,
         'kind': message.kind,
         'body': message.body,
+        'edited': message.edited_at is not None,
+        'deleted': message.deleted,
         'sender': _user(message.sender, request),
         'created_at': _when.to_representation(message.created_at),
         'reply_to': None if parent is None else {
             'id': parent.id,
             'kind': parent.kind,
             'sender': parent.sender.username,
-            'snippet': _snippet(parent),
+            'snippet': '' if parent.deleted else _snippet(parent),
         },
         'attachment': request.build_absolute_uri(message.attachment.url) if message.attachment else None,
         'payload': payload,
@@ -113,6 +115,13 @@ def _conversation(row, request):
         'last_message': None if last is None else _message(last, request),
         'unread': row['unread'],
         'updated_at': _when.to_representation(convo.updated_at),
+        'muted': row['muted'],
+        'pinned': row['pinned'],
+        'marked_unread': row['marked_unread'],
+        # Direct chats: 'me' when I blocked them, 'them' when they blocked me.
+        'block': row['block'],
+        # Direct chats: when the other person last read the chat.
+        'seen_at': None if row['seen_at'] is None else _when.to_representation(row['seen_at']),
     }
 
 
@@ -313,3 +322,88 @@ def group_vote(request, conversation_id):
 def ballot(request, conversation_id):
     choice = request.data.get('choice')
     return _row(request, services.cast_ballot(request.user, conversation_id, choice))
+
+
+class SettingsSerializer(serializers.Serializer):
+    muted = serializers.BooleanField(required=False)
+    pinned = serializers.BooleanField(required=False)
+    unread = serializers.BooleanField(required=False)
+
+
+@api_view(['PATCH'])
+def chat_settings(request, conversation_id):
+    """This member's own mute / pin / mark-as-unread for the chat."""
+    data = SettingsSerializer(data=request.data)
+    data.is_valid(raise_exception=True)
+    body = data.validated_data
+    convo = services.update_settings(
+        request.user,
+        conversation_id,
+        muted=body.get('muted'),
+        pinned=body.get('pinned'),
+        unread=body.get('unread'),
+    )
+    return _row(request, convo)
+
+
+@api_view(['POST'])
+def clear_history(request, conversation_id):
+    return _row(request, services.clear_history(request.user, conversation_id))
+
+
+@api_view(['POST'])
+def delete_chat(request, conversation_id):
+    services.delete_chat(request.user, conversation_id)
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['POST'])
+def add_members(request, conversation_id):
+    ids = request.data.get('user_ids')
+    if not isinstance(ids, list):
+        raise services.MessagingError(400, 'invalid_user_ids', 'Pick someone to add.')
+    try:
+        ids = [int(i) for i in ids]
+    except (TypeError, ValueError):
+        raise services.MessagingError(400, 'invalid_user_ids', 'Pick someone to add.')
+    return _row(request, services.add_members(request.user, conversation_id, ids))
+
+
+@api_view(['POST'])
+def report(request, conversation_id):
+    message_id = request.data.get('message_id')
+    try:
+        message_id = int(message_id) if message_id not in (None, '') else None
+    except (TypeError, ValueError):
+        raise services.MessagingError(400, 'invalid_message', 'Unknown message.')
+    services.report(
+        request.user,
+        conversation_id,
+        request.data.get('reason'),
+        message_id=message_id,
+        details=request.data.get('details') or '',
+    )
+    return Response(status=status.HTTP_201_CREATED)
+
+
+# PATCH edits your text message; DELETE deletes it for everyone.
+@api_view(['PATCH', 'DELETE'])
+def message_detail(request, message_id):
+    if request.method == 'DELETE':
+        return _fresh_message(services.delete_message(request.user, message_id), request)
+    return _fresh_message(services.edit_message(request.user, message_id, request.data.get('body')), request)
+
+
+@api_view(['GET'])
+def blocks(request):
+    return Response([_user(u, request) for u in services.blocked_users(request.user)])
+
+
+# POST blocks the person; DELETE unblocks them.
+@api_view(['POST', 'DELETE'])
+def block(request, user_id):
+    if request.method == 'DELETE':
+        services.unblock(request.user, user_id)
+    else:
+        services.block(request.user, user_id)
+    return Response(status=status.HTTP_204_NO_CONTENT)

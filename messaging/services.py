@@ -9,7 +9,7 @@ from rest_framework.exceptions import APIException
 from accounts.models import User
 from takes.services import friend_ids
 
-from .models import Ballot, Conversation, GroupVote, Membership, Message, PollVote, Reaction
+from .models import Ballot, Block, Conversation, GroupVote, Membership, Message, PollVote, Reaction, Report
 
 MAX_TITLE = 60
 MAX_DESCRIPTION = 300
@@ -59,6 +59,10 @@ def open_direct(user, other_id):
                 Membership(conversation=conversation, user=user),
                 Membership(conversation=conversation, user=other),
             ])
+        else:
+            # Opening a chat you deleted brings it back (its history stays
+            # cleared).
+            Membership.objects.filter(conversation=conversation, user=user, hidden=True).update(hidden=False)
     return conversation
 
 
@@ -138,6 +142,8 @@ def _post(conversation_id, sender, membership=None, **fields):
     messages, marks the chat as read."""
     message = Message.objects.create(conversation_id=conversation_id, sender=sender, **fields)
     Conversation.objects.filter(pk=conversation_id).update(updated_at=message.created_at)
+    # A new message brings a deleted chat back to the inbox.
+    Membership.objects.filter(conversation_id=conversation_id, hidden=True).update(hidden=False)
     if membership is not None:
         membership.last_read_at = message.created_at
         membership.save(update_fields=['last_read_at'])
@@ -197,6 +203,7 @@ def send_message(user, conversation_id, body, kind=Message.Kind.TEXT, reply_to=N
     """A text, GIF, sticker, photo, video, movie card or poll, optionally
     replying to another message of the same chat."""
     membership = membership_of(user, conversation_id)
+    _require_not_blocked(user, membership.conversation)
     body = (body or '').strip()
     if kind == Message.Kind.SYSTEM or kind not in Message.Kind.values:
         raise MessagingError(400, 'invalid_kind', 'Unknown message kind.')
@@ -459,13 +466,16 @@ def messages(user, conversation_id, after=None):
         .prefetch_related('reactions', 'poll_votes')
         .filter(conversation_id=conversation_id)
     )
+    if membership.cleared_at is not None:
+        queryset = queryset.filter(created_at__gt=membership.cleared_at)
     if after is not None:
         rows = list(queryset.filter(id__gt=after).order_by('id')[:MESSAGES_PAGE])
     else:
         rows = list(queryset.order_by('-id')[:MESSAGES_PAGE])
         rows.reverse()
     membership.last_read_at = timezone.now()
-    membership.save(update_fields=['last_read_at'])
+    membership.marked_unread = False
+    membership.save(update_fields=['last_read_at', 'marked_unread'])
     return rows
 
 
@@ -473,11 +483,16 @@ def conversations(user):
     """The user's conversations, most recently active first, each with its
     members, last message and how many messages are unread."""
     settle_votes(Membership.objects.filter(user=user).values_list('conversation_id', flat=True))
-    memberships = Membership.objects.filter(user=user).select_related('conversation')
+    memberships = list(Membership.objects.filter(user=user, hidden=False).select_related('conversation'))
     convo_ids = [m.conversation_id for m in memberships]
     if not convo_ids:
         return []
-    last_read = {m.conversation_id: m.last_read_at for m in memberships}
+    mine = {m.conversation_id: m for m in memberships}
+    # Unread counts and the last message start after a cleared history.
+    since = {
+        m.conversation_id: max(filter(None, [m.last_read_at, m.cleared_at]), default=None)
+        for m in memberships
+    }
 
     last_ids = (
         Message.objects.filter(conversation_id=OuterRef('pk'))
@@ -498,7 +513,7 @@ def conversations(user):
     }
 
     unread_filter = Q()
-    for convo_id, read_at in last_read.items():
+    for convo_id, read_at in since.items():
         clause = Q(conversation_id=convo_id)
         if read_at is not None:
             clause &= Q(created_at__gt=read_at)
@@ -510,16 +525,40 @@ def conversations(user):
         .annotate(n=Count('id'))
         .values_list('conversation_id', 'n')
     )
+    blocked_by_me = set(Block.objects.filter(blocker=user).values_list('blocked_id', flat=True))
+    blocked_me = set(Block.objects.filter(blocked=user).values_list('blocker_id', flat=True))
 
     rows = []
     for convo in convos:
-        members = [m.user for m in convo.memberships.all()]
+        membership = mine[convo.id]
+        member_rows = list(convo.memberships.all())
+        members = [m.user for m in member_rows]
+        last = last_messages.get(convo.last_message_id)
+        if last is not None and membership.cleared_at is not None and last.created_at <= membership.cleared_at:
+            last = None
+        block = None
+        seen_at = None
+        if convo.kind == Conversation.Kind.DIRECT:
+            other = next((m for m in member_rows if m.user_id != user.id), None)
+            if other is not None:
+                if other.user_id in blocked_by_me:
+                    block = 'me'
+                elif other.user_id in blocked_me:
+                    block = 'them'
+                seen_at = other.last_read_at
         rows.append({
             'conversation': convo,
             'members': members,
-            'last_message': last_messages.get(convo.last_message_id),
+            'last_message': last,
             'unread': unread.get(convo.id, 0),
+            'muted': membership.muted,
+            'pinned': membership.pinned,
+            'marked_unread': membership.marked_unread,
+            'block': block,
+            'seen_at': seen_at,
         })
+    # Pinned chats first, each group newest first.
+    rows.sort(key=lambda r: not r['pinned'])
     return rows
 
 
@@ -528,3 +567,158 @@ def conversation_row(user, conversation):
         if row['conversation'].id == conversation.id:
             return row
     raise MessagingError(404, 'not_found', 'Conversation not found.')
+
+
+# --- Chat settings, history, blocking, editing and reports -----------------
+
+
+def update_settings(user, conversation_id, muted=None, pinned=None, unread=None):
+    """This member's own mute / pin / mark-as-unread settings for a chat."""
+    membership = membership_of(user, conversation_id)
+    fields = []
+    for name, value in (('muted', muted), ('pinned', pinned), ('marked_unread', unread)):
+        if value is not None:
+            setattr(membership, name, bool(value))
+            fields.append(name)
+    if unread is False:
+        membership.last_read_at = timezone.now()
+        fields.append('last_read_at')
+    if fields:
+        membership.save(update_fields=fields)
+    return membership.conversation
+
+
+def clear_history(user, conversation_id):
+    """Hides every message so far, for this member only."""
+    membership = membership_of(user, conversation_id)
+    membership.cleared_at = timezone.now()
+    membership.marked_unread = False
+    membership.save(update_fields=['cleared_at', 'marked_unread'])
+    return membership.conversation
+
+
+def delete_chat(user, conversation_id):
+    """Removes a direct chat from this member's inbox and clears its history
+    for them; it comes back if a new message arrives. Groups are left
+    instead."""
+    membership = membership_of(user, conversation_id)
+    if membership.conversation.kind != Conversation.Kind.DIRECT:
+        raise MessagingError(400, 'group_chat', 'Leave the group instead.')
+    membership.cleared_at = timezone.now()
+    membership.hidden = True
+    membership.pinned = False
+    membership.marked_unread = False
+    membership.save(update_fields=['cleared_at', 'hidden', 'pinned', 'marked_unread'])
+
+
+def _require_not_blocked(user, conversation):
+    if conversation.kind != Conversation.Kind.DIRECT:
+        return
+    other_id = (
+        Membership.objects.filter(conversation=conversation).exclude(user=user)
+        .values_list('user_id', flat=True).first()
+    )
+    if other_id is None:
+        return
+    if Block.objects.filter(blocker=user, blocked_id=other_id).exists():
+        raise MessagingError(403, 'you_blocked', 'Unblock them to send a message.')
+    if Block.objects.filter(blocker_id=other_id, blocked=user).exists():
+        raise MessagingError(403, 'blocked', "You can't reply to this conversation.")
+
+
+def block(user, other_id):
+    if other_id == user.id:
+        raise MessagingError(400, 'self_block', 'You cannot block yourself.')
+    other = User.objects.filter(pk=other_id).first()
+    if other is None:
+        raise MessagingError(404, 'not_found', 'User not found.')
+    Block.objects.get_or_create(blocker=user, blocked=other)
+    return other
+
+
+def unblock(user, other_id):
+    Block.objects.filter(blocker=user, blocked_id=other_id).delete()
+
+
+def blocked_users(user):
+    return [b.blocked for b in Block.objects.filter(blocker=user).select_related('blocked').order_by('-created_at')]
+
+
+def edit_message(user, message_id, body):
+    """Changes the text of your own text message."""
+    message = _message_in_my_chat(user, message_id)
+    if message.sender_id != user.id or message.kind != Message.Kind.TEXT or message.deleted:
+        raise MessagingError(403, 'not_editable', 'You can only edit your own text messages.')
+    _require_not_blocked(user, message.conversation)
+    body = (body or '').strip()
+    if not body:
+        raise MessagingError(400, 'empty_message', 'Write something first.')
+    if len(body) > MAX_BODY:
+        raise MessagingError(400, 'message_too_long', f'Messages are at most {MAX_BODY} characters.')
+    if body != message.body:
+        message.body = body
+        message.edited_at = timezone.now()
+        message.save(update_fields=['body', 'edited_at'])
+    return message
+
+
+def delete_message(user, message_id):
+    """Deletes a message for everyone: your own, or any message in a group
+    you own. A placeholder stays in its place."""
+    message = _message_in_my_chat(user, message_id)
+    if message.kind == Message.Kind.SYSTEM:
+        raise MessagingError(400, 'not_deletable', 'System lines cannot be deleted.')
+    convo = message.conversation
+    is_owner = convo.kind != Conversation.Kind.DIRECT and convo.created_by_id == user.id
+    if message.sender_id != user.id and not is_owner:
+        raise MessagingError(403, 'not_yours', 'You can only delete your own messages.')
+    if message.deleted:
+        return message
+    with transaction.atomic():
+        if message.attachment:
+            message.attachment.delete(save=False)
+        message.body = ''
+        message.payload = {}
+        message.attachment = None
+        message.pinned = False
+        message.deleted = True
+        message.save(update_fields=['body', 'payload', 'attachment', 'pinned', 'deleted'])
+        message.reactions.all().delete()
+        message.poll_votes.all().delete()
+    return message
+
+
+def report(user, conversation_id, reason, message_id=None, details=''):
+    conversation = membership_of(user, conversation_id).conversation
+    if reason not in Report.Reason.values:
+        raise MessagingError(400, 'invalid_reason', 'Pick a reason.')
+    message = None
+    if message_id is not None:
+        message = Message.objects.filter(pk=message_id, conversation=conversation).first()
+        if message is None:
+            raise MessagingError(400, 'invalid_message', 'That message is not in this chat.')
+    return Report.objects.create(
+        reporter=user,
+        conversation=conversation,
+        message=message,
+        reason=reason,
+        details=(details or '').strip()[:500],
+    )
+
+
+def add_members(user, conversation_id, user_ids):
+    """The group creator adds friends to a group or topic."""
+    conversation = membership_of(user, conversation_id).conversation
+    _require_owner(user, conversation)
+    ids = {int(i) for i in user_ids or []} - {user.id}
+    if not ids:
+        raise MessagingError(400, 'no_members', 'Pick someone to add.')
+    _require_friends(user, ids)
+    existing = set(Membership.objects.filter(conversation=conversation).values_list('user_id', flat=True))
+    new = User.objects.filter(pk__in=ids - existing).order_by('username')
+    with transaction.atomic():
+        for person in new:
+            # Joins with the earlier messages already read.
+            Membership.objects.create(conversation=conversation, user=person, last_read_at=timezone.now())
+            _system(conversation.id, user, 'added', person)
+    return conversation

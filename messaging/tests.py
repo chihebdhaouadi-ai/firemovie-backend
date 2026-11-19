@@ -342,3 +342,119 @@ class GroupChatFeatureTests(APITestCase):
         self._end_vote()
         self.assertEqual(self.client.get(f'{BASE}{gid}/').status_code, 404)
         self.assertFalse(Conversation.objects.filter(pk=gid).exists())
+
+
+class ChatBasicsTests(APITestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.me = User.objects.create_user(username='me', password='pw-123456')
+        self.ana = User.objects.create_user(username='ana', password='pw-123456')
+        self.ben = User.objects.create_user(username='ben', password='pw-123456')
+        befriend(self.me, self.ana)
+        befriend(self.me, self.ben)
+        self.client.force_authenticate(self.me)
+        self.direct = self.client.post(BASE, {'kind': 'direct', 'user_id': self.ana.id}, format='json').json()['id']
+
+    def send(self, convo, body, user=None):
+        if user is not None:
+            self.client.force_authenticate(user)
+        response = self.client.post(f'{BASE}{convo}/messages/', {'body': body}, format='json')
+        self.client.force_authenticate(self.me)
+        return response
+
+    def row(self, convo):
+        return next((c for c in self.client.get(BASE).json() if c['id'] == convo), None)
+
+    def test_mute_pin_and_mark_unread(self):
+        group = self.client.post(BASE, {'kind': 'group', 'title': 'G', 'member_ids': [self.ana.id]},
+                                 format='json').json()['id']
+        response = self.client.patch(f'{BASE}{self.direct}/settings/', {'pinned': True, 'muted': True},
+                                     format='json')
+        self.assertTrue(response.json()['pinned'])
+        self.assertTrue(response.json()['muted'])
+        # The pinned chat comes first even though the group is newer.
+        self.assertEqual(self.client.get(BASE).json()[0]['id'], self.direct)
+        self.client.patch(f'{BASE}{group}/settings/', {'unread': True}, format='json')
+        self.assertTrue(self.row(group)['marked_unread'])
+        self.client.get(f'{BASE}{group}/messages/')
+        self.assertFalse(self.row(group)['marked_unread'])
+
+    def test_clear_history_is_only_for_me(self):
+        self.send(self.direct, 'old')
+        self.client.post(f'{BASE}{self.direct}/clear/')
+        self.assertEqual(self.client.get(f'{BASE}{self.direct}/messages/').json(), [])
+        self.assertIsNone(self.row(self.direct)['last_message'])
+        self.send(self.direct, 'new', user=self.ana)
+        bodies = [m['body'] for m in self.client.get(f'{BASE}{self.direct}/messages/').json()]
+        self.assertEqual(bodies, ['new'])
+        self.client.force_authenticate(self.ana)
+        self.assertEqual(len(self.client.get(f'{BASE}{self.direct}/messages/').json()), 2)
+
+    def test_deleted_chat_comes_back_on_a_new_message(self):
+        self.send(self.direct, 'hi')
+        self.assertEqual(self.client.post(f'{BASE}{self.direct}/delete/').status_code, 204)
+        self.assertIsNone(self.row(self.direct))
+        self.send(self.direct, 'still there?', user=self.ana)
+        row = self.row(self.direct)
+        self.assertEqual(row['last_message']['body'], 'still there?')
+        self.assertEqual(row['unread'], 1)
+
+    def test_groups_are_left_not_deleted(self):
+        group = self.client.post(BASE, {'kind': 'group', 'title': 'G', 'member_ids': [self.ana.id]},
+                                 format='json').json()['id']
+        self.assertEqual(self.client.post(f'{BASE}{group}/delete/').json()['code'], 'group_chat')
+
+    def test_block_stops_both_sides_until_unblocked(self):
+        self.client.post(f'/api/messaging/blocks/{self.ana.id}/')
+        self.assertEqual(self.row(self.direct)['block'], 'me')
+        self.assertEqual(self.send(self.direct, 'x').json()['code'], 'you_blocked')
+        self.assertEqual(self.send(self.direct, 'x', user=self.ana).json()['code'], 'blocked')
+        self.assertEqual([u['username'] for u in self.client.get('/api/messaging/blocks/').json()], ['ana'])
+        self.client.force_authenticate(self.ana)
+        self.assertEqual(self.row(self.direct)['block'], 'them')
+        self.client.force_authenticate(self.me)
+        self.client.delete(f'/api/messaging/blocks/{self.ana.id}/')
+        self.assertIsNone(self.row(self.direct)['block'])
+        self.assertEqual(self.send(self.direct, 'back').status_code, 201)
+
+    def test_edit_and_delete_own_message(self):
+        mine = self.send(self.direct, 'helo').json()['id']
+        theirs = self.send(self.direct, 'yo', user=self.ana).json()['id']
+        edited = self.client.patch(f'/api/messaging/messages/{mine}/', {'body': 'hello'}, format='json').json()
+        self.assertEqual(edited['body'], 'hello')
+        self.assertTrue(edited['edited'])
+        self.assertEqual(self.client.patch(f'/api/messaging/messages/{theirs}/', {'body': 'no'},
+                                           format='json').status_code, 403)
+        self.assertEqual(self.client.delete(f'/api/messaging/messages/{theirs}/').status_code, 403)
+        gone = self.client.delete(f'/api/messaging/messages/{mine}/').json()
+        self.assertTrue(gone['deleted'])
+        self.assertEqual(gone['body'], '')
+
+    def test_group_owner_deletes_any_message_and_adds_members(self):
+        group = self.client.post(BASE, {'kind': 'group', 'title': 'G', 'member_ids': [self.ana.id]},
+                                 format='json').json()['id']
+        theirs = self.send(group, 'spam', user=self.ana).json()['id']
+        self.assertTrue(self.client.delete(f'/api/messaging/messages/{theirs}/').json()['deleted'])
+        response = self.client.post(f'{BASE}{group}/members/', {'user_ids': [self.ben.id]}, format='json')
+        self.assertEqual({m['username'] for m in response.json()['members']}, {'me', 'ana', 'ben'})
+        self.assertEqual(Message.objects.filter(conversation_id=group, kind='system').last().payload,
+                         {'event': 'added', 'target': 'ben'})
+        # Ben starts with only the "added" line unread; Ana cannot add people.
+        self.client.force_authenticate(self.ben)
+        self.assertEqual(self.row(group)['unread'], 1)
+        self.client.force_authenticate(self.ana)
+        response = self.client.post(f'{BASE}{group}/members/', {'user_ids': [self.ben.id]}, format='json')
+        self.assertEqual(response.status_code, 403)
+
+    def test_report_and_seen(self):
+        msg = self.send(self.direct, 'hi').json()['id']
+        response = self.client.post(f'{BASE}{self.direct}/report/', {'reason': 'spam', 'message_id': msg},
+                                    format='json')
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(self.client.post(f'{BASE}{self.direct}/report/', {'reason': 'nope'},
+                                          format='json').status_code, 400)
+        self.assertIsNone(self.row(self.direct)['seen_at'])
+        self.client.force_authenticate(self.ana)
+        self.client.get(f'{BASE}{self.direct}/messages/')
+        self.client.force_authenticate(self.me)
+        self.assertIsNotNone(self.row(self.direct)['seen_at'])
