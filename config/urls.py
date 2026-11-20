@@ -17,6 +17,7 @@ urlpatterns = [
     path('api/articles/', include('articles.api_urls')),
     path('api/upcoming/', include('upcoming.urls')),
     path('api/messaging/', include('messaging.urls')),
+    path('api/movie-lists/', include('movielists.urls')),
     path('articles/', include('articles.urls')),
 ]
 
