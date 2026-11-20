@@ -1,0 +1,389 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>FilmSage: stop rating, start a conversation</title>
+  <meta name="description" content="FilmSage is where film lovers talk. Share takes, debate topics, react with feelings, chat with friends and build your Top 5, Watched and Watchlist.">
+  <meta name="theme-color" content="#f3efe8">
+  <link rel="icon" href="{% static 'landing/assets/favicon.png' %}" type="image/png" sizes="256x256">
+  <link rel="preload" href="{% static 'landing/assets/fonts/Poppins-Regular.ttf' %}" as="font" type="font/ttf" crossorigin>
+  <link rel="preload" href="{% static 'landing/assets/fonts/Poppins-SemiBold.ttf' %}" as="font" type="font/ttf" crossorigin>
+  <link rel="stylesheet" href="{% static 'landing/home.css' %}">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="FilmSage">
+  <meta property="og:title" content="FilmSage: stop rating, start a conversation">
+  <meta property="og:description" content="Share takes, debate topics and talk films with friends.">
+  <meta property="og:image" content="{% static 'landing/assets/og-image.jpg' %}">
+  <meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <path id="logo-half" d="M600 400 L512 312 C470 262 410 262 368 312 L150 530 C103 565 103 635 150 670 L368 888 C410 938 470 938 512 888 L600 800 L470 670 C420 620 420 580 470 530 Z"/>
+    <symbol id="logo" viewBox="100 250 1000 700"><use href="#logo-half"/><use href="#logo-half" transform="translate(1200 0) scale(-1 1)"/><circle cx="600" cy="600" r="75"/></symbol>
+    <symbol id="i-heart" viewBox="0 0 16 16"><path d="M8 14.3 1.9 8.4A3.9 3.9 0 0 1 8 3.3a3.9 3.9 0 0 1 6.1 5.1z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></symbol>
+    <symbol id="i-heart-fill" viewBox="0 0 16 16"><path d="M8 14.3 1.9 8.4A3.9 3.9 0 0 1 8 3.3a3.9 3.9 0 0 1 6.1 5.1z" fill="currentColor"/></symbol>
+    <symbol id="i-reply" viewBox="0 0 16 16"><path d="M2.5 3h11v8h-6l-3 2.5V11h-2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 16 16"><path d="M11 2.5l2.5 2.5L5.5 13H3v-2.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 16 16"><path d="M3 8h9M8.5 4.5 12 8l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-image" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="6" cy="6.5" r="1.2" fill="currentColor"/><path d="M3 12l3.5-3.5L9 11l2-2 2 2" fill="none" stroke="currentColor" stroke-width="1.3"/></symbol>
+    <symbol id="i-shuffle" viewBox="0 0 16 16"><path d="M2 4.5h2.5c3 0 4 7 7 7H14M2 11.5h2.5c1.2 0 2-1 2.6-2.2M9 6.7c.6-1.2 1.4-2.2 2.5-2.2H14M12 2.5l2 2-2 2M12 9.5l2 2-2 2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
+
+<header class="nav" id="top">
+  <div class="wrap nav__in">
+    <a class="logo" href="#top" aria-label="FilmSage home">
+      <svg width="40" height="28" aria-hidden="true"><use href="#logo"/></svg>
+      <span>FilmSage</span>
+    </a>
+    <nav class="nav__links" aria-label="Sections">
+      <a href="#takes">Takes</a>
+      <a href="#topics">Topics</a>
+      <a href="#friends">Friends</a>
+      <a href="#inbox">Inbox</a>
+      <a href="#collections">Collections</a>
+    </nav>
+    <a class="btn btn--dark btn--sm" href="{% url 'landing:join' %}">Start</a>
+  </div>
+</header>
+
+<main id="main" tabindex="-1">
+
+  <!-- ============ HERO ============ -->
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="wrap hero__grid">
+      <div class="hero__copy">
+        <p class="kicker">Out now in early access</p>
+        <h1 id="hero-title">Stop rating,<br>start a<br><span class="hl">conversation</span></h1>
+        <p class="lead">Share takes, debate topics and talk films with friends. One app for everything you watch and everything you feel about it.</p>
+        <div class="hero__cta">
+          <a class="btn btn--dark btn--lg" href="{% url 'landing:join' %}">Start talking <svg class="nudge" width="20" height="20" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+          <a class="btn btn--ghost btn--lg" href="#takes">See what's inside</a>
+        </div>
+        <div class="stores" aria-label="Mobile apps, coming soon">
+          <span class="store"><svg viewBox="0 0 24 24" width="24" height="24" fill="#fff" aria-hidden="true"><path d="M12.15 6.9c-.95 0-2.42-1.08-3.96-1.04-2.04.03-3.91 1.18-4.96 3.01-2.12 3.68-.55 9.1 1.52 12.09 1.01 1.45 2.2 3.09 3.79 3.04 1.52-.07 2.09-.99 3.93-.99 1.83 0 2.35.99 3.96.95 1.64-.03 2.68-1.48 3.68-2.95 1.16-1.69 1.64-3.33 1.66-3.42-.04-.01-3.18-1.22-3.22-4.86-.03-3.04 2.48-4.49 2.6-4.56-1.43-2.09-3.62-2.32-4.39-2.38-2-.16-3.68 1.09-4.61 1.09zM15.53 3.83c.84-1.01 1.4-2.43 1.25-3.83-1.21.05-2.66.8-3.53 1.82-.78.9-1.46 2.34-1.27 3.71 1.34.1 2.71-.69 3.55-1.7"/></svg><span><small>Coming soon to the</small><b>App Store</b></span></span>
+          <span class="store"><svg viewBox="0 0 24 26" width="22" height="24" aria-hidden="true"><path d="M2 1v24l12-12z" fill="#2f8cf4"/><path d="M2 1l12 12 4-4L5 1.5z" fill="#34c759"/><path d="M18 9l4.5 2.8q1 1.2 0 2.4L18 17l-4-4z" fill="#ffc928"/><path d="M2 25l12-12 4 4-13 7.5z" fill="#ea4335"/></svg><span><small>Coming soon on</small><b>Google Play</b></span></span>
+        </div>
+        <p class="count">English · Français · العربية · Русский</p>
+      </div>
+
+      <div class="wall" aria-hidden="true">
+        <div class="wall__col">
+          <div class="track">
+            <article class="card">
+              <div class="who"><span class="av" style="--c:#6b8f71">S</span><div><b>sloumao9</b><small>2d ago · Loved it</small></div></div>
+              <p class="q">“I honestly think the Joker won. He didn’t need to kill Batman; he just needed to prove even the strongest principles could collapse.”</p>
+              <div class="film"><i class="po" style="--a:#c9a24b;--b:#3b2a14"></i><span>Joker</span><span class="heart on"><svg><use href="#i-heart-fill"/></svg>24</span></div>
+            </article>
+            <article class="card">
+              <div class="art" style="--a:#7fb6e8;--b:#e8c0a0"></div>
+              <h4>Chris Pratt to star in ‘The Traveler’ adaptation</h4>
+              <small class="mut">Latest article</small>
+            </article>
+            <article class="card">
+              <div class="who"><span class="av" style="--c:#8a5fb0">K</span><div><b>kinoleo</b><small>5h ago · Made me think</small></div></div>
+              <p class="q">“Gorgeous to look at, but the third act lost me completely.”</p>
+              <div class="film"><i class="po" style="--a:#e08a3c;--b:#2a1a40"></i><span>Dune</span><span class="heart"><svg><use href="#i-heart"/></svg>7</span></div>
+            </article>
+          </div>
+        </div>
+        <div class="wall__col wall__col--down">
+          <div class="track">
+            <article class="card">
+              <p class="tag" style="--t:#b08a3e">Question</p>
+              <h4>Are we really free, or just slaves to a life we didn’t choose?</h4>
+              <div class="about"><i class="po" style="--a:#e86fa0;--b:#5d8a3c"></i><div><small>About this movie</small><b>Fight Club</b></div></div>
+              <div class="foot"><span>9 replies</span><span class="heart"><svg><use href="#i-heart"/></svg>12</span></div>
+            </article>
+            <article class="card">
+              <b class="ttl">Popular with friends</b>
+              <div class="row"><i class="po po--lg" style="--a:#4a8aa0;--b:#222"></i><i class="po po--lg" style="--a:#d93fa6;--b:#4b2b8f"></i><i class="po po--lg" style="--a:#8aa07a;--b:#1f2a20"></i></div>
+            </article>
+            <article class="card">
+              <p class="tag" style="--t:#5b3df5">Poll</p>
+              <h4>Best Villeneuve film?</h4>
+              <div class="poll"><span style="--w:62%">Arrival <b>62%</b></span><span style="--w:28%">Sicario <b>28%</b></span><span style="--w:10%">Enemy <b>10%</b></span></div>
+            </article>
+          </div>
+        </div>
+        <div class="wall__col wall__col--slow">
+          <div class="track">
+            <article class="card">
+              <p class="tag" style="--t:#d6334f">Hot take</p>
+              <h4>The Dark Knight Rises is better than The Dark Knight.</h4>
+              <div class="foot"><span>24 replies</span><span class="heart on"><svg><use href="#i-heart-fill"/></svg>31</span></div>
+            </article>
+            <article class="card">
+              <div class="art" style="--a:#5aa0e8;--b:#f3d9c8"></div>
+              <h4>‘The Odyssey’ leads the most awaited films of the year</h4>
+              <small class="mut">Latest article</small>
+            </article>
+            <article class="card">
+              <div class="who"><span class="av" style="--c:#3c7fc0">A</span><div><b>amine_t</b><small>1d ago · Shocked me</small></div></div>
+              <p class="q">“Dachra still gives me chills.”</p>
+              <div class="film"><i class="po" style="--a:#111;--b:#555"></i><span>Dachra</span><span class="heart"><svg><use href="#i-heart"/></svg>5</span></div>
+            </article>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FEATURE STRIP ============ -->
+  <section class="strip" aria-label="What you can do">
+    <div class="wrap strip__grid">
+      <a class="tile" href="#takes"><span class="tile__n">01</span><h3>Takes</h3><p>Say what you thought in a few lines. Others answer with a heart.</p></a>
+      <a class="tile" href="#topics"><span class="tile__n">02</span><h3>Topics</h3><p>Questions, debates, hot takes and polls, each with its own thread.</p></a>
+      <a class="tile" href="#friends"><span class="tile__n">03</span><h3>Friends</h3><p>See what your circle watches, feels and says, as it happens.</p></a>
+      <a class="tile" href="#collections"><span class="tile__n">04</span><h3>Collections</h3><p>Your Top 5, Watched and Watchlist, ready to share.</p></a>
+    </div>
+  </section>
+
+  <!-- ============ TAKES + FEELINGS ============ -->
+  <section class="feature" id="takes" aria-labelledby="takes-title">
+    <div class="wrap feature__grid">
+      <div class="feature__copy" data-reveal>
+        <p class="kicker">Takes</p>
+        <h2 id="takes-title">React with feelings, not stars</h2>
+        <p class="lead">A number never said why a film stayed with you. On FilmSage you pick up to three feelings and write a short take. Your friends answer with a heart, or jump into the replies.</p>
+        <ul class="ticks">
+          <li>Ten feelings, from <em>Loved it</em> to <em>Made me think</em></li>
+          <li>One reaction on every take and topic: a heart</li>
+          <li>Hide spoilers behind a cover until someone taps</li>
+          <li>Long takes fold neatly with “See more”</li>
+        </ul>
+      </div>
+      <div class="feature__demo" data-reveal>
+        <figure class="device">
+          <img src="{% static 'landing/assets/screens/app-film.webp' %}" alt="The Fight Club page in FilmSage: overview, Watched and Watchlist buttons, and “How did it make you feel?” set to Masterpiece" width="600" height="1298" loading="lazy" decoding="async">
+        </figure>
+        <article class="card float float--bl">
+          <div class="who"><span class="av" style="--c:#c0643c">S</span><div><b>Samlap09</b><small>3d ago</small></div></div>
+          <p class="felt">Felt <span>🏆 Masterpiece</span><span>✨ Blew my mind</span></p>
+          <p class="q">“Fight Club is nothing short of a masterpiece. Every frame hides something new.”</p>
+          <div class="film">
+            <i class="po" style="--a:#e86fa0;--b:#5d8a3c"></i><span>Fight Club</span>
+            <button type="button" class="heart heart--btn" aria-pressed="false" aria-label="Like, 41 likes"><svg class="h-off"><use href="#i-heart"/></svg><svg class="h-on"><use href="#i-heart-fill"/></svg><span>41</span></button>
+          </div>
+          <small class="try">Tap the heart</small>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ TOPICS ============ -->
+  <section class="feature feature--alt" id="topics" aria-labelledby="topics-title">
+    <div class="wrap feature__grid feature__grid--flip">
+      <div class="feature__copy" data-reveal>
+        <p class="kicker">Topics</p>
+        <h2 id="topics-title">Every big question gets its own room</h2>
+        <p class="lead">Ask what the ending meant, defend a hot take or run a poll. Each topic opens into a full page with the film beside it and a thread that keeps everyone in the same place.</p>
+        <ul class="ticks">
+          <li>Questions, discussions, hot takes, polls and scenes</li>
+          <li>Reply in threads, add a photo, tag a friend</li>
+          <li>The thread can fill the whole screen when it heats up</li>
+          <li>Trending topics on your home, so you never miss a good one</li>
+        </ul>
+      </div>
+      <div class="feature__demo" data-reveal>
+        <figure class="device">
+          <img src="{% static 'landing/assets/screens/app-topic.webp' %}" alt="A question topic about Fight Club in FilmSage, with its film card, heart and comments" width="600" height="1298" loading="lazy" decoding="async">
+        </figure>
+        <div class="float float--tr float--topics">
+        <div class="types" role="tablist" aria-label="Topic types">
+          <button type="button" role="tab" class="type on" aria-selected="true" data-type="q">Question</button>
+          <button type="button" role="tab" class="type" aria-selected="false" data-type="h">Hot take</button>
+          <button type="button" role="tab" class="type" aria-selected="false" data-type="p">Poll</button>
+        </div>
+        <article class="card topic" data-topic="q">
+          <p class="tag" style="--t:#b08a3e">Question</p>
+          <h4>What did the final shot of Inception really mean?</h4>
+          <div class="about"><i class="po" style="--a:#3c6fb0;--b:#1a1f2a"></i><div><small>About this movie</small><b>Inception</b></div></div>
+          <div class="thread">
+            <div class="cm"><span class="av av--s" style="--c:#8a5fb0">K</span><div><b>kinoleo</b><p>It doesn’t matter if it falls. He stopped looking.</p></div></div>
+            <div class="cm cm--reply"><span class="av av--s" style="--c:#6b8f71">S</span><div><b>sloumao9</b><p><span class="mention">@kinoleo</span> exactly, that’s the whole point.</p><span class="cm__img" style="--a:#d9a441;--b:#3b6fd0"></span></div></div>
+          </div>
+          <div class="foot"><span>38 replies</span><span class="heart on"><svg><use href="#i-heart-fill"/></svg>57</span></div>
+        </article>
+        <article class="card topic" data-topic="h" hidden>
+          <p class="tag" style="--t:#d6334f">Hot take</p>
+          <h4>Musicals are the most cinematic genre there is.</h4>
+          <div class="sides"><div><small>Agree</small><p>“Every frame is choreography.”</p></div><div><small>Disagree</small><p>“Songs stop the story cold.”</p></div></div>
+          <div class="foot"><span>112 replies</span><span class="heart"><svg><use href="#i-heart"/></svg>88</span></div>
+        </article>
+        <article class="card topic" data-topic="p" hidden>
+          <p class="tag" style="--t:#5b3df5">Poll</p>
+          <h4>Which Nolan film would you watch tonight?</h4>
+          <div class="poll poll--big"><span style="--w:44%">Interstellar <b>44%</b></span><span style="--w:31%">The Prestige <b>31%</b></span><span style="--w:25%">Memento <b>25%</b></span></div>
+          <div class="foot"><span>1,204 votes</span><span class="heart"><svg><use href="#i-heart"/></svg>146</span></div>
+        </article>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FRIENDS ============ -->
+  <section class="feature" id="friends" aria-labelledby="friends-title">
+    <div class="wrap feature__grid">
+      <div class="feature__copy" data-reveal>
+        <p class="kicker">Friends</p>
+        <h2 id="friends-title">Build your cinema circle</h2>
+        <p class="lead">Movies are better with people. Add friends, follow what each of them watches and feels, and catch their newest takes as stories at the top of your home.</p>
+        <ul class="ticks">
+          <li>Stories show what friends just shared</li>
+          <li>Friends Activity: their films, feelings and latest takes</li>
+          <li>Popular with Friends, picked from your own circle</li>
+          <li>Hold a take to call in the Angel Bird and start a debate</li>
+        </ul>
+      </div>
+      <div class="feature__demo" data-reveal>
+        <figure class="device">
+          <img src="{% static 'landing/assets/screens/app-you.webp' %}" alt="The FilmSage home: friends’ stories, Friends Activity, Popular with Friends, popular and upcoming films" width="600" height="1298" loading="lazy" decoding="async">
+        </figure>
+        <div class="panel panel--stack float float--bl">
+          <h5>Friends Activity</h5>
+          <div class="activity">
+            <div><span class="av" style="--c:#222">L<i class="bdg">❤️</i></span><small>lo8aaao9o</small></div>
+            <div><span class="av" style="--c:#555">S<i class="bdg">💔</i></span><small>Sel3aoo9gg</small></div>
+            <div><span class="av" style="--c:#6b8f71">S<i class="bdg">✨</i></span><small>slouma09</small></div>
+          </div>
+          <div class="bird"><span class="bird__icon" aria-hidden="true">🕊️</span><p><b>Debate one of your Top 5?</b><br><small class="mut">The Angel Bird finds you a match.</small></p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ INBOX ============ -->
+  <section class="feature feature--alt" id="inbox" aria-labelledby="inbox-title">
+    <div class="wrap feature__grid feature__grid--flip">
+      <div class="feature__copy" data-reveal>
+        <p class="kicker">Inbox</p>
+        <h2 id="inbox-title">Talk films in private, too</h2>
+        <p class="lead">Message a friend or start a group. Send a topic straight into the chat, and when someone tags you in a reply, it lands in your inbox with a tap back to the exact comment.</p>
+        <ul class="ticks">
+          <li>Direct messages and group chats</li>
+          <li>Shared takes and topics arrive as cards you can open</li>
+          <li>Tags in comments bring you right to the reply</li>
+          <li>Private topics, just for the people you choose</li>
+        </ul>
+      </div>
+      <div class="feature__demo" data-reveal>
+        <figure class="device">
+          <img src="{% static 'landing/assets/screens/app-chat.webp' %}" alt="A FilmSage chat with a card showing a topic you were tagged in, linked to its Fight Club comment" width="600" height="1298" loading="lazy" decoding="async">
+        </figure>
+        <div class="float float--tr float--chat" aria-hidden="true">
+          <div class="msg">did you see the new Dune trailer??</div>
+          <div class="msg msg--me">yes!! watching it tonight</div>
+          <div class="typing"><i></i><i></i><i></i></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ COLLECTIONS ============ -->
+  <section class="feature" id="collections" aria-labelledby="coll-title">
+    <div class="wrap feature__grid">
+      <div class="feature__copy" data-reveal>
+        <p class="kicker">Collections</p>
+        <h2 id="coll-title">Collect everything you love</h2>
+        <p class="lead">Your taste, organized. Pick the five films that define you, keep a Watched list that grows with every film, and save the rest for later.</p>
+        <ul class="ticks">
+          <li>Your Top 5, the films that say who you are</li>
+          <li>Watched and Watchlist, edited from one tap on the pen</li>
+          <li>Share any list with friends in a message</li>
+          <li>Can’t decide? Pick a film at random from your Watchlist</li>
+        </ul>
+      </div>
+      <div class="feature__demo" data-reveal>
+        <figure class="device">
+          <img src="{% static 'landing/assets/screens/app-collections.webp' %}" alt="FilmSage Collections: Your Top 5, Watched and Watchlist, each with a pen to edit" width="600" height="1298" loading="lazy" decoding="async">
+        </figure>
+        <div class="float float--bl float--note">
+          <svg width="18" height="18" aria-hidden="true"><use href="#i-pen"/></svg>
+          <p><b>Tap the pen</b><br><small class="mut">Edit, share, or pick at random</small></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PICK AT RANDOM ============ -->
+  <section class="random" id="random" aria-labelledby="random-title">
+    <div class="wrap random__grid">
+      <div class="random__copy" data-reveal>
+        <p class="kicker kicker--light">Pick at random</p>
+        <h2 id="random-title">Let your Watchlist decide tonight</h2>
+        <p class="lead">Every film you saved, as a wall of covers. A wave rolls out and lands on one. Try it here with this week’s 50 most popular films: drag to look around, or shuffle again.</p>
+        <button type="button" class="btn btn--light btn--lg" id="random-shuffle"><svg width="20" height="20" aria-hidden="true"><use href="#i-shuffle"/></svg> Shuffle</button>
+        <p class="random__pick" aria-live="polite">Tonight: <b id="random-name">…</b></p>
+      </div>
+      <div class="random__stage" data-reveal>
+        <canvas id="random-wall" aria-label="A wall of film covers that waves toward a randomly picked film" role="img"></canvas>
+        <figure class="device device--mini" aria-hidden="true">
+          <img src="{% static 'landing/assets/screens/app-random.webp' %}" alt="" width="600" height="1298" loading="lazy" decoding="async">
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ DISCOVER ============ -->
+  <section class="feature" id="discover" aria-labelledby="discover-title">
+    <div class="wrap">
+      <div class="center" data-reveal>
+        <p class="kicker">Discover</p>
+        <h2 id="discover-title">Always something worth watching</h2>
+        <p class="lead lead--center">Find films the way you actually think about them, then see where to stream them.</p>
+      </div>
+      <div class="bento" data-reveal>
+        <div class="bento__item bento__item--wide">
+          <h3>Popular, upcoming and on the rise</h3>
+          <p class="mut">The films everyone is talking about this week, and what lands in theaters this month.</p>
+          <div class="ribbon"><i style="--a:#c9a24b;--b:#3b2a14"></i><i style="--a:#d93fa6;--b:#4b2b8f"></i><i style="--a:#e08a3c;--b:#2a1a40"></i><i style="--a:#4ac0a0;--b:#3b6fd0"></i><i style="--a:#a0b04a;--b:#703a20"></i><i style="--a:#5a8ac0;--b:#2a3a60"></i><i style="--a:#e86fa0;--b:#6f8a3c"></i></div>
+        </div>
+        <div class="bento__item bento__item--tall">
+          <h3>Browse your way</h3>
+          <div class="chips"><span>By year</span><span>By genre</span><span>By country</span><span>By language</span><span>On Netflix</span><span>On Prime</span></div>
+        </div>
+        <div class="bento__item">
+          <h3>Where to watch</h3>
+          <p class="mut">Every film page shows the services streaming it.</p>
+        </div>
+        <div class="bento__item">
+          <h3>Latest articles</h3>
+          <p class="mut">Film news, casting and festival picks, right on your home.</p>
+        </div>
+        <div class="bento__item bento__item--full bento__item--dark">
+          <h3>Earn your frame</h3>
+          <p>Takes, topics and debates earn points. Climb the leaderboard and unlock a frame around your avatar.</p>
+          <div class="frames"><span>Newcomer</span><span>Explorer</span><span>Debater</span><span>Top critic</span><span class="gold">Legend</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CTA ============ -->
+  <section class="cta" aria-labelledby="cta-title">
+    <div class="wrap cta__in" data-reveal>
+      <svg class="cta__logo" width="72" height="50" aria-hidden="true"><use href="#logo"/></svg>
+      <h2 id="cta-title">Your next favorite conversation starts here</h2>
+      <p class="lead lead--center">Free to join. Bring your friends and your opinions.</p>
+      <a class="btn btn--dark btn--lg" href="{% url 'landing:join' %}">Join FilmSage <svg class="nudge" width="20" height="20" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer__in">
+    <a class="logo logo--sm" href="#top" aria-label="FilmSage, back to top"><svg width="30" height="21" aria-hidden="true"><use href="#logo"/></svg><span>FilmSage</span></a>
+    <nav aria-label="Footer"><a href="#takes">Takes</a><a href="#topics">Topics</a><a href="#friends">Friends</a><a href="#collections">Collections</a></nav>
+    <small class="mut">Film data from TMDB. © FilmSage</small>
+  </div>
+</footer>
+
+{{ random_films|json_script:"random-films" }}
+<script src="{% static 'landing/home.js' %}" defer></script>
+</body>
+</html>
