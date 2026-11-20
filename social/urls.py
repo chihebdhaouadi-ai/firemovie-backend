@@ -12,4 +12,5 @@ urlpatterns = [
     path('movie-suggestions', views.create_movie_suggestions, name='social_movie_suggestions'),
     path('notifications', views.notifications, name='social_notifications'),
     path('notifications/read', views.mark_notifications_read, name='social_notifications_read'),
+    path('notifications/<int:notification_id>/read', views.mark_notification_read, name='social_notification_read'),
 ]

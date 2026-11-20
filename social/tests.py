@@ -165,6 +165,24 @@ class ConnectionsAndNotificationsTests(SocialTestBase):
         response = self.client.get('/api/social/notifications')
         self.assertEqual(response.data['unread_count'], 0)
 
+    def test_one_notification_can_be_marked_read_only_by_its_recipient(self):
+        self.client.force_authenticate(self.me)
+        self.client.post('/api/social/friend-requests', {'user_id': self.other.id}, format='json')
+        self.client.force_authenticate(self.other)
+        notification_id = self.client.get('/api/social/notifications').data['results'][0]['id']
+
+        # Someone else can't touch it.
+        self.client.force_authenticate(self.me)
+        response = self.client.post(f'/api/social/notifications/{notification_id}/read')
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+        self.client.force_authenticate(self.other)
+        response = self.client.post(f'/api/social/notifications/{notification_id}/read')
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        response = self.client.get('/api/social/notifications')
+        self.assertEqual(response.data['unread_count'], 0)
+        self.assertTrue(response.data['results'][0]['read'])
+
 
 class MovieSuggestionTests(SocialTestBase):
     SUGGESTION = {

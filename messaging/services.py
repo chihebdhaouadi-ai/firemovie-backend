@@ -205,7 +205,8 @@ def send_message(user, conversation_id, body, kind=Message.Kind.TEXT, reply_to=N
     membership = membership_of(user, conversation_id)
     _require_not_blocked(user, membership.conversation)
     body = (body or '').strip()
-    if kind == Message.Kind.SYSTEM or kind not in Message.Kind.values:
+    # Take and list cards are only posted by the app itself (shares and mentions).
+    if kind in (Message.Kind.SYSTEM, Message.Kind.TAKE, Message.Kind.LIST) or kind not in Message.Kind.values:
         raise MessagingError(400, 'invalid_kind', 'Unknown message kind.')
     if kind == Message.Kind.TEXT and not body:
         raise MessagingError(400, 'empty_message', 'Write something first.')
@@ -233,6 +234,74 @@ def send_message(user, conversation_id, body, kind=Message.Kind.TEXT, reply_to=N
             allowed_reactions=_clean_reactions(allowed_reactions),
         )
     return message
+
+
+MAX_CARD_TEXT = 200
+
+
+def take_card(item, comment=None, event='shared'):
+    """The payload of a take card: a snapshot of the take (a feed item) and,
+    for a mention, of the comment that tagged the friend."""
+    film = item.get('film') or {}
+    payload = {
+        'event': event,
+        'take': {
+            'id': item['id'],
+            'tag': item.get('tag') or '',
+            'title': (item.get('title') or '')[:MAX_CARD_TEXT],
+            'body': (item.get('body') or '')[:MAX_CARD_TEXT],
+            'author': item.get('author_name') or '',
+            'author_avatar': item.get('author_avatar'),
+            'film_title': film.get('title'),
+            'poster': film.get('poster_url'),
+        },
+    }
+    if comment is not None:
+        payload['comment'] = {
+            'id': comment.id,
+            'parent_id': comment.parent_id,
+            'body': comment.body[:MAX_CARD_TEXT],
+        }
+    return payload
+
+
+def list_card(item):
+    """The payload of a list card: a snapshot of the list (a list item)."""
+    owner = item.get('owner') or {}
+    return {
+        'event': 'shared',
+        'list': {
+            'id': item['id'],
+            'name': (item.get('name') or '')[:MAX_CARD_TEXT],
+            'owner': owner.get('username') or '',
+            'film_count': item.get('film_count') or 0,
+            'posters': list(item.get('posters') or [])[:4],
+        },
+    }
+
+
+def post_list_card(sender, recipient_id, payload, note=''):
+    """Posts a list card in the direct chat with a friend, like a take card."""
+    return post_take_card(sender, recipient_id, payload, note=note, kind=Message.Kind.LIST)
+
+
+def post_take_card(sender, recipient_id, payload, note='', kind=Message.Kind.TAKE):
+    """Posts a take card in the direct chat with a friend (opening the chat if
+    needed). Skipped quietly when either of them blocked the other."""
+    if Block.objects.filter(
+        Q(blocker=sender, blocked_id=recipient_id) | Q(blocker_id=recipient_id, blocked=sender)
+    ).exists():
+        return None
+    conversation = open_direct(sender, recipient_id)
+    membership = Membership.objects.get(conversation=conversation, user=sender)
+    return _post(
+        conversation.id,
+        sender,
+        membership,
+        kind=kind,
+        body=(note or '').strip()[:MAX_BODY],
+        payload=payload,
+    )
 
 
 def _message_in_my_chat(user, message_id):

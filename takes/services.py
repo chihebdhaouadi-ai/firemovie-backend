@@ -15,6 +15,7 @@ from .errors import TakeError
 from films.models import Film
 
 from .models import (
+    SavedTake,
     MAX_REACTIONS_PER_FILM,
     CardSkin,
     REVIEW_VOTE_KINDS,
@@ -150,7 +151,15 @@ def _author_reactions(film_id, author_ids):
     return feelings
 
 
-def _item(take, viewer, is_most_helpful=False, author_reactions=None):
+def _saved_ids(viewer, takes):
+    """Which of [takes] the viewer saved, in one query."""
+    return set(
+        SavedTake.objects.filter(user=viewer, take_id__in=[take.id for take in takes])
+        .values_list('take_id', flat=True)
+    )
+
+
+def _item(take, viewer, is_most_helpful=False, author_reactions=None, saved=None):
     counts = {kind: 0 for kind in VOTE_KINDS}
     my_votes = []
     for vote in take.votes.all():
@@ -178,6 +187,7 @@ def _item(take, viewer, is_most_helpful=False, author_reactions=None):
             else ([take.reaction] if take.reaction else [])
         ),
         'tag': take.tag,
+        'title': take.title,
         'body': take.body,
         'image_url': take.image.url if take.image else None,
         'created_at': serializers.DateTimeField().to_representation(take.created_at),
@@ -192,6 +202,11 @@ def _item(take, viewer, is_most_helpful=False, author_reactions=None):
         'timecode': take.timecode,
         'poll_options': poll_options,
         'my_poll_option_id': my_poll_option_id,
+        'is_saved': (
+            saved
+            if saved is not None
+            else SavedTake.objects.filter(take=take, user=viewer).exists()
+        ),
     }
 
 
@@ -222,6 +237,7 @@ def takes_for_film(film_id, viewer):
 
     ranked = sorted(takes, key=lambda take: (helpfulness(take), take.created_at, take.id), reverse=True)
     feelings = _author_reactions(film_id, [take.author_id for take in takes])
+    saved = _saved_ids(viewer, takes)
     items = []
     for index, take in enumerate(ranked):
         is_most_helpful = (
@@ -233,6 +249,7 @@ def takes_for_film(film_id, viewer):
                 viewer,
                 is_most_helpful=is_most_helpful,
                 author_reactions=feelings.get(take.author_id, []),
+                saved=take.id in saved,
             )
         )
     return items
@@ -294,8 +311,11 @@ def comment_item(comment, take, viewer):
         'id': comment.id,
         'author_id': comment.author_id,
         'author_name': comment.author.username,
+        'author_avatar': comment.author.avatar.url if comment.author.avatar else None,
+        'author_frame': comment.author.equipped_frame,
         'parent_id': comment.parent_id,
         'body': comment.body,
+        'image_url': comment.image.url if comment.image else None,
         'stance': comment.stance,
         'created_at': serializers.DateTimeField().to_representation(comment.created_at),
         'is_writer': comment.author_id == take.author_id,
@@ -339,7 +359,7 @@ def mentioned_friends(user, body):
     return found[:MAX_MENTIONS_PER_COMMENT]
 
 
-def create_comment(take, user, body, parent=None, stance=None):
+def create_comment(take, user, body, parent=None, stance=None, image=None):
     with transaction.atomic():
         comment = TakeComment.objects.create(
             take=take,
@@ -347,10 +367,13 @@ def create_comment(take, user, body, parent=None, stance=None):
             body=body,
             parent=parent,
             stance=stance,
+            image=image,
         )
         if stance is not None and parent is None and take.tag == Tag.REVIEW:
             set_vote(take, user, STANCE_VOTE[stance], True)
-        # Tagged friends get a notification that opens this conversation.
+        # Tagged friends get a notification that opens this conversation,
+        # and a card in your chat that opens the exact comment.
+        tagged = mentioned_friends(user, body)
         Notification.objects.bulk_create([
             Notification(
                 recipient=friend,
@@ -359,8 +382,14 @@ def create_comment(take, user, body, parent=None, stance=None):
                 take=take,
                 comment=comment,
             )
-            for friend in mentioned_friends(user, body)
+            for friend in tagged
         ])
+        if tagged:
+            from messaging.services import post_take_card, take_card
+
+            card = take_card(take_detail(take, user), comment=comment, event='mention')
+            for friend in tagged:
+                post_take_card(user, friend.id, card)
     return comment_item(comment, take, user)
 
 
@@ -411,6 +440,12 @@ def share_take(take, sender, recipient_ids, message=''):
         )
         for recipient_id in sorted(recipients)
     ])
+    # It also lands in your chat with each friend as a card that opens it.
+    from messaging.services import post_take_card, take_card
+
+    card = take_card(take_detail(take, sender))
+    for recipient_id in sorted(recipients):
+        post_take_card(sender, recipient_id, card, note=message)
     return len(recipients)
 
 
@@ -463,13 +498,13 @@ def friend_activity_for_film(film_id, viewer):
 
 
 def create_topic(user, body, tag, film_id='', image=None, options=None, scene='', timecode='', spoiler=False,
-                 skin=CardSkin.NORMAL):
+                 skin=CardSkin.NORMAL, title=''):
     """A question, discussion, hot take, poll or scene, optionally about a film and/or with a photo."""
     try:
         with transaction.atomic():
             take = Take.objects.create(
                 film_id=film_id or '', author=user, reaction=None, tag=tag,
-                body=body, image=image or None, spoiler=spoiler,
+                title=(title or '').strip(), body=body, image=image or None, spoiler=spoiler,
                 scene=scene or '', timecode=timecode or '', skin=skin,
             )
             for position, label in enumerate(options or []):
@@ -506,10 +541,11 @@ def _feed_items(takes, viewer):
         film.imdb_id: film
         for film in Film.objects.filter(imdb_id__in={take.film_id for take in takes})
     }
+    saved = _saved_ids(viewer, takes)
     items = []
     for take in takes:
         film = films.get(take.film_id)
-        item = _item(take, viewer)
+        item = _item(take, viewer, saved=take.id in saved)
         item['film'] = {
             'film_id': take.film_id,
             'title': (film.title or None) if film else None,
@@ -517,6 +553,28 @@ def _feed_items(takes, viewer):
         }
         items.append(item)
     return items
+
+
+def set_saved(take, user, active):
+    if active:
+        SavedTake.objects.get_or_create(take=take, user=user)
+    else:
+        SavedTake.objects.filter(take=take, user=user).delete()
+
+
+def saved_takes(viewer, limit=100):
+    """Takes the viewer saved, most recently saved first."""
+    ids = list(
+        SavedTake.objects.filter(user=viewer).values_list('take_id', flat=True)[:limit]
+    )
+    by_id = {
+        take.id: take
+        for take in Take.objects.filter(id__in=ids)
+        .select_related('author')
+        .prefetch_related('votes', 'poll_options', 'poll_votes')
+        .annotate(comment_total=Count('comments'))
+    }
+    return _feed_items([by_id[i] for i in ids if i in by_id], viewer)
 
 
 def explore_feed(viewer, limit=EXPLORE_LIMIT):

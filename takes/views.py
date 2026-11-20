@@ -30,6 +30,7 @@ MIN_POLL_OPTIONS = 2
 
 
 class TopicSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=120, required=False, allow_blank=True, default='', trim_whitespace=True)
     body = serializers.CharField(max_length=280, trim_whitespace=True)
     tag = serializers.ChoiceField(choices=[Tag.QUESTION, Tag.DISCUSSION, Tag.HOT_TAKE, Tag.POLL, Tag.SCENE])
     film_id = serializers.CharField(max_length=20, required=False, allow_blank=True, default='')
@@ -90,7 +91,20 @@ class TopicSerializer(serializers.Serializer):
 
 
 class CommentBodySerializer(serializers.Serializer):
-    body = serializers.CharField(max_length=300, trim_whitespace=True)
+    body = serializers.CharField(
+        max_length=300, trim_whitespace=True, required=False, allow_blank=True, default=''
+    )
+    image = serializers.FileField(required=False, allow_null=True, default=None)
+
+    def validate_image(self, image):
+        if image is None:
+            return None
+        if image.content_type not in TOPIC_IMAGE_TYPES:
+            raise serializers.ValidationError('Use a JPEG, PNG or WebP photo.', code='invalid_image')
+        if image.size > MAX_TOPIC_IMAGE_BYTES:
+            raise serializers.ValidationError('Photos must be 5 MB or smaller.', code='image_too_large')
+        return image
+
     parent_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     stance = serializers.ChoiceField(
         choices=CommentStance.choices,
@@ -98,6 +112,11 @@ class CommentBodySerializer(serializers.Serializer):
         allow_null=True,
         default=None,
     )
+
+    def validate(self, data):
+        if not data.get('body') and data.get('image') is None:
+            raise serializers.ValidationError('Write something or add a photo.', code='empty_comment')
+        return data
 
 
 class VoteBodySerializer(serializers.Serializer):
@@ -175,6 +194,7 @@ def create_topic(request):
         request.user,
         data['body'],
         data['tag'],
+        title=data['title'],
         film_id=data['film_id'],
         image=data.get('image'),
         options=data['options'],
@@ -303,6 +323,28 @@ def trending_topics(request):
     return Response(services.trending_topics(request.user))
 
 
+class SaveSerializer(serializers.Serializer):
+    active = serializers.BooleanField()
+
+
+@api_view(['PUT'])
+def set_saved(request, take_id):
+    """Save someone's take to come back to, or unsave it."""
+    take = get_object_or_404(Take.objects.select_related('author'), pk=take_id)
+    if take.author_id == request.user.id:
+        raise TakeError(400, 'own_take', 'You cannot save your own take.')
+    body = SaveSerializer(data=request.data)
+    body.is_valid(raise_exception=True)
+    services.set_saved(take, request.user, body.validated_data['active'])
+    return Response(services.take_item(take, request.user))
+
+
+@api_view(['GET'])
+def saved_takes(request):
+    """The takes you saved, most recently saved first."""
+    return Response(services.saved_takes(request.user))
+
+
 @api_view(['GET'])
 def friend_takes(request):
     return Response(services.friend_takes(request.user))
@@ -410,6 +452,7 @@ def take_comments(request, take_id):
         serializer.validated_data['body'],
         parent,
         stance=stance,
+        image=serializer.validated_data.get('image'),
     )
     return Response(item, status=201)
 

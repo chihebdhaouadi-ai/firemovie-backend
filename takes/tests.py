@@ -1019,3 +1019,84 @@ class PollAndSceneTests(APITestCase):
         body = response.json()
         self.assertEqual([option['label'] for option in body['poll_options']], ['Memento', 'Inception'])
         self.assertTrue(body['spoiler'])
+
+
+class TopicTitleTests(APITestCase):
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        self.user = get_user_model().objects.create_user(username='titler', password='pw-123456')
+        self.client.force_authenticate(self.user)
+
+    def test_topic_keeps_its_title_and_title_is_optional(self):
+        response = self.client.post('/api/takes/topics/', {
+            'title': '  Did Joker win?  ', 'body': 'He proved his point without killing Batman.', 'tag': 'question',
+            'film_id': 'tt0468569',
+        }, format='multipart')
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()['title'], 'Did Joker win?')
+        response = self.client.post('/api/takes/topics/', {'body': 'No title here', 'tag': 'question', 'film_id': 'tt0468569'},
+                                    format='multipart')
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()['title'], '')
+
+    def test_title_is_limited(self):
+        response = self.client.post('/api/takes/topics/', {'title': 'x' * 121, 'body': 'b', 'tag': 'question', 'film_id': 'tt0468569'},
+                                    format='multipart')
+        self.assertEqual(response.status_code, 400)
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp())
+class CommentPhotoTests(APITestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.viewer = User.objects.create_user(username='viewer', password='pw-123456')
+        self.client.force_authenticate(self.viewer)
+        self.topic = Take.objects.create(film_id=FILM, author=self.viewer, tag='question', body='Why?')
+        self.url = f'/api/takes/takes/{self.topic.id}/comments/'
+
+    def photo(self, content_type='image/png', size=1024):
+        return SimpleUploadedFile('pic.png', b'x' * size, content_type=content_type)
+
+    def test_a_comment_can_carry_a_photo_with_or_without_text(self):
+        response = self.client.post(self.url, {'body': 'Look', 'image': self.photo()}, format='multipart')
+        self.assertEqual(response.status_code, 201)
+        self.assertIn('/comments/', response.json()['image_url'])
+        only_photo = self.client.post(self.url, {'image': self.photo()}, format='multipart')
+        self.assertEqual(only_photo.status_code, 201)
+        self.assertEqual(only_photo.json()['body'], '')
+        listed = self.client.get(self.url).json()
+        self.assertTrue(all(item['image_url'] for item in listed))
+
+    def test_an_empty_comment_is_refused(self):
+        response = self.client.post(self.url, {'body': '  '}, format='json')
+        self.assertEqual(response.status_code, 400)
+
+    def test_only_small_images_are_accepted(self):
+        bad_type = self.client.post(
+            self.url, {'image': self.photo(content_type='application/pdf')}, format='multipart'
+        )
+        self.assertEqual(bad_type.status_code, 400)
+        too_big = self.client.post(
+            self.url, {'image': self.photo(size=5 * 1024 * 1024 + 1)}, format='multipart'
+        )
+        self.assertEqual(too_big.status_code, 400)
+
+    def test_plain_comments_have_no_photo(self):
+        response = self.client.post(self.url, {'body': 'Text only'}, format='json')
+        self.assertIsNone(response.json()['image_url'])
+
+
+class CommentAuthorTests(APITestCase):
+    def test_comments_carry_the_authors_photo_and_frame(self):
+        User = get_user_model()
+        viewer = User.objects.create_user(username='viewer', password='pw-123456')
+        viewer.equipped_frame = 'gold'
+        viewer.save(update_fields=['equipped_frame'])
+        topic = Take.objects.create(film_id=FILM, author=viewer, tag='question', body='Why?')
+        self.client.force_authenticate(viewer)
+        item = self.client.post(
+            f'/api/takes/takes/{topic.id}/comments/', {'body': 'Hi'}, format='json'
+        ).json()
+        self.assertEqual(item['author_frame'], 'gold')
+        self.assertIn('author_avatar', item)
+        self.assertIsNone(item['author_avatar'])

@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from accounts.models import User
 
-from .models import MovieSuggestion, Notification
+from .models import FriendRequest, MovieSuggestion, Notification
 
 
 class UserCardSerializer(serializers.ModelSerializer):
@@ -22,7 +22,7 @@ TAKE_PREVIEW_LENGTH = 140
 
 class NotificationSerializer(serializers.ModelSerializer):
     actor = UserCardSerializer(read_only=True)
-    friend_request_id = serializers.IntegerField(read_only=True)
+    friend_request_id = serializers.SerializerMethodField()
     suggestion = MovieSuggestionPayloadSerializer(read_only=True)
     take = serializers.SerializerMethodField()
     comment_id = serializers.IntegerField(read_only=True)
@@ -34,6 +34,14 @@ class NotificationSerializer(serializers.ModelSerializer):
             'id', 'kind', 'actor', 'friend_request_id', 'suggestion', 'take', 'comment_id',
             'message', 'read', 'created_at',
         )
+
+    def get_friend_request_id(self, notification):
+        """The request to answer, only while it still waits for an answer;
+        once accepted the row no longer offers Accept and Decline."""
+        friend_request = notification.friend_request
+        if friend_request is None or friend_request.status != FriendRequest.Status.PENDING:
+            return None
+        return friend_request.id
 
     def get_take(self, notification):
         """Where a share or mention leads: enough to open the take's page."""
