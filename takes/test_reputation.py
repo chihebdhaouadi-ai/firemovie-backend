@@ -18,7 +18,7 @@ def review(author, film, at=None):
     return take
 
 
-def vote(take, voter, kind=VoteKind.WELL_ARGUED, at=None):
+def vote(take, voter, kind=VoteKind.UP, at=None):
     created = TakeVote.objects.create(take=take, user=voter, kind=kind)
     if at is not None:
         TakeVote.objects.filter(pk=created.pk).update(created_at=at)
@@ -226,8 +226,8 @@ class ProgressTests(TestCase):
     def test_self_votes_do_not_add_reactions(self):
         take = review(self.user, FILM)
         vote(take, self.user)
-        vote(take, self.other, VoteKind.WELL_ARGUED)
-        vote(take, self.other, VoteKind.CHANGED_MY_MIND)
+        vote(take, self.other, VoteKind.UP)
+        vote(take, self.other, VoteKind.DRAW)
 
         self.assertEqual(progress_for(self.user)['reactions'], 1)
 
@@ -262,10 +262,10 @@ class ProgressTests(TestCase):
 
         self.assertEqual(first_take['current'], 1)
 
-    def test_well_argued_votes_drive_the_debater_frame(self):
+    def test_up_votes_drive_the_debater_frame(self):
         for index in range(50):
             take = review(self.user, f'tt{index:07d}')
-            vote(take, self.other, VoteKind.WELL_ARGUED)
+            vote(take, self.other, VoteKind.UP)
 
         progress = progress_for(self.user)
 

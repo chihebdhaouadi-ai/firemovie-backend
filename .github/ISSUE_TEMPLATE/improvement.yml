@@ -1,0 +1,22 @@
+name: Improvement / tech debt
+description: Make existing behaviour, code, UX or performance better.
+labels: ["type: improvement", "status: needs triage"]
+body:
+  - type: textarea
+    id: current
+    attributes:
+      label: Current state
+      description: Include file paths where relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: desired
+    attributes:
+      label: Desired state
+    validations:
+      required: true
+  - type: textarea
+    id: risk
+    attributes:
+      label: Risk and scope
+      description: What could break, and what is explicitly out of scope.

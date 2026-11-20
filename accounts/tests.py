@@ -161,7 +161,7 @@ class EquippedFrameTests(APITestCase):
             take = Take.objects.create(
                 author=self.user, film_id=f'tt{index:07d}', tag=Tag.REVIEW, body='Take',
             )
-            TakeVote.objects.create(take=take, user=self.other, kind='well_argued')
+            TakeVote.objects.create(take=take, user=self.other, kind='up')
 
     def test_bronze_can_always_be_equipped(self):
         response = self.client.patch(

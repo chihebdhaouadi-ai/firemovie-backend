@@ -1,0 +1,12 @@
+changelog:
+  categories:
+    - title: Features
+      labels: ["type: feature"]
+    - title: Fixes
+      labels: ["type: bug"]
+    - title: Improvements
+      labels: ["type: improvement", "type: tech-debt"]
+    - title: Security
+      labels: ["type: security"]
+    - title: Other
+      labels: ["*"]

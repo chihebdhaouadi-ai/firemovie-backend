@@ -1,9 +1,38 @@
 import os
+import sys
 from pathlib import Path
 
 import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _load_dotenv(path):
+    """Load KEY=VALUE lines from a local .env file into os.environ.
+
+    Real environment variables (Heroku config vars, shell exports) always win, so this
+    only fills in values that are not already set. Missing file is a no-op.
+    """
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding='utf-8').splitlines():
+        line = raw.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        key = key.strip().removeprefix('export ').strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in '"\'':
+            value = value[1:-1]
+        if key:
+            os.environ.setdefault(key, value)
+
+
+RUNNING_TESTS = 'test' in sys.argv[1:2]
+
+# Tests must not pick up real third-party keys from a developer's .env.
+if not RUNNING_TESTS:
+    _load_dotenv(BASE_DIR / '.env')
 
 DEBUG = os.environ.get('DJANGO_DEBUG', 'True').lower() in ('true', '1')
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY') or (
@@ -40,6 +69,7 @@ INSTALLED_APPS = [
     'landing',
     'articles',
     'upcoming',
+    'messaging',
 ]
 
 # Where the landing page's "Join" buttons send visitors (the FilmSage web app).
@@ -99,6 +129,12 @@ RAPIDAPI_HOST = 'online-movie-database.p.rapidapi.com'
 RAPIDAPI_TIMEOUT_SECONDS = 8
 RAPIDAPI_CACHE_SECONDS = 60 * 60 * 6
 OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '')
+# Watchmode: search page browse lists (popular, by year, by streaming service).
+WATCHMODE_API_KEY = os.environ.get('WATCHMODE_API_KEY', '')
+# KinoCheck (no key) supplies trailer YouTube ids. Off in tests so they never call it.
+KINOCHECK_ENABLED = os.environ.get(
+    'KINOCHECK_ENABLED', 'False' if RUNNING_TESTS else 'True',
+).lower() in ('true', '1')
 IMDB232_RAPIDAPI_KEY = os.environ.get('IMDB232_RAPIDAPI_KEY', '')
 NEWS_CACHE_SECONDS = 60 * 30
 

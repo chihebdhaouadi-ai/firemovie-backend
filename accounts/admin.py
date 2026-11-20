@@ -11,13 +11,13 @@ from .models import User
 # (targets, rules) live in code; the admin shows each user's standing against them.
 ACHIEVEMENT_LABELS = {
     'film_critic': 'Film critic (write 10 reviews)',
-    'debater': 'Debater (50 well-argued votes)',
+    'debater': 'Debater (50 up votes)',
     'local_cinema': 'Local cinema (not tracked yet)',
 }
 BADGE_LABELS = {
-    'well_argued': 'Well argued',
-    'changed_my_mind': 'Changed my mind',
-    'disagree_but_fair': 'Disagree but fair',
+    'well_argued': 'Well argued (10 up votes)',
+    'changed_my_mind': 'Changed my mind (10 changed-my-mind comments)',
+    'disagree_but_fair': 'Disagree but fair (10 draw votes)',
     'top_critic': 'Top critic (weekly top 3)',
     'first_take': 'First take',
 }

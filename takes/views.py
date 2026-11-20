@@ -7,12 +7,18 @@ from social.serializers import UserCardSerializer
 
 from . import reputation, services, translation
 from .errors import TakeError
-from .models import CommentStance, TOPIC_VOTE_KINDS, Tag, Take, TakeComment
+from .models import MAX_REACTIONS_PER_FILM, CardSkin, CommentStance, ReportReason, REVIEW_VOTE_KINDS, TOPIC_VOTE_KINDS, Tag, Take, TakeComment
+
+
+# Film takes can run long (reviews); topics stay short.
+MAX_TAKE_LENGTH = 1500
 
 
 class TakeBodySerializer(serializers.Serializer):
-    body = serializers.CharField(max_length=280, trim_whitespace=True)
+    body = serializers.CharField(max_length=MAX_TAKE_LENGTH, trim_whitespace=True)
     tag = serializers.ChoiceField(choices=Tag.choices, default=Tag.REVIEW)
+    skin = serializers.ChoiceField(choices=CardSkin.choices, default=CardSkin.NORMAL)
+    spoiler = serializers.BooleanField(required=False, default=False)
 
 
 MAX_TOPIC_IMAGE_BYTES = 5 * 1024 * 1024
@@ -37,6 +43,7 @@ class TopicSerializer(serializers.Serializer):
     scene = serializers.CharField(max_length=120, required=False, allow_blank=True, default='', trim_whitespace=True)
     timecode = serializers.CharField(max_length=20, required=False, allow_blank=True, default='', trim_whitespace=True)
     spoiler = serializers.BooleanField(required=False, default=False)
+    skin = serializers.ChoiceField(choices=CardSkin.choices, required=False, default=CardSkin.NORMAL)
 
     def validate_image(self, image):
         if image is None:
@@ -109,13 +116,25 @@ def film_summary(request, film_id):
 
 @api_view(['PUT'])
 def set_reaction(request, film_id):
+    """Body {"reactions": [...]} with up to 3 feelings (empty clears them), or the older
+    single form {"reaction": "loved" | null}."""
     data = request.data
-    if not isinstance(data, dict) or 'reaction' not in data:
-        raise TakeError(400, 'invalid_reaction', 'Pick one of the reactions.')
-    reaction = data['reaction']
-    if reaction is not None and reaction not in services.REACTION_KEYS:
-        raise TakeError(400, 'invalid_reaction', 'Pick one of the reactions.')
-    services.set_reaction(film_id, request.user, reaction)
+    invalid = TakeError(400, 'invalid_reaction', 'Pick up to 3 of the reactions.')
+    if not isinstance(data, dict):
+        raise invalid
+    if 'reactions' in data:
+        reactions = data['reactions']
+        if not isinstance(reactions, list) or len(set(map(str, reactions))) != len(reactions):
+            raise invalid
+    elif 'reaction' in data:
+        reactions = [] if data['reaction'] is None else [data['reaction']]
+    else:
+        raise invalid
+    if len(reactions) > MAX_REACTIONS_PER_FILM or any(
+        reaction not in services.REACTION_KEYS for reaction in reactions
+    ):
+        raise invalid
+    services.set_reactions(film_id, request.user, reactions)
     return Response(services.summary_payload(film_id, request.user))
 
 
@@ -130,6 +149,8 @@ def film_takes(request, film_id):
         request.user,
         serializer.validated_data['body'],
         serializer.validated_data['tag'],
+        skin=serializer.validated_data['skin'],
+        spoiler=serializer.validated_data['spoiler'],
     )
     return Response(item, status=201)
 
@@ -160,8 +181,94 @@ def create_topic(request):
         scene=data['scene'],
         timecode=data['timecode'],
         spoiler=data['spoiler'],
+        skin=data['skin'],
     )
     return Response(item, status=201)
+
+
+# Topics keep the shorter limit they were posted with.
+MAX_TOPIC_LENGTH = 280
+
+
+class EditTakeSerializer(serializers.Serializer):
+    body = serializers.CharField(max_length=MAX_TAKE_LENGTH, trim_whitespace=True)
+    skin = serializers.ChoiceField(choices=CardSkin.choices, required=False)
+    spoiler = serializers.BooleanField(required=False)
+
+
+class ReportTakeSerializer(serializers.Serializer):
+    reason = serializers.ChoiceField(choices=ReportReason.choices)
+    details = serializers.CharField(
+        max_length=500, required=False, allow_blank=True, default='', trim_whitespace=True,
+    )
+
+
+class ShareTakeSerializer(serializers.Serializer):
+    recipient_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        min_length=1,
+        max_length=services.MAX_SHARE_RECIPIENTS,
+    )
+    message = serializers.CharField(
+        max_length=280, required=False, allow_blank=True, default='', trim_whitespace=True,
+    )
+
+
+@api_view(['GET', 'PATCH', 'DELETE'])
+def take_detail(request, take_id):
+    take = get_object_or_404(Take.objects.select_related('author'), pk=take_id)
+    if request.method == 'GET':
+        return Response(services.take_detail(take, request.user))
+    if take.author_id != request.user.id:
+        raise TakeError(403, 'not_owner', 'Only the author can change this take.')
+    if request.method == 'DELETE':
+        take.delete()
+        return Response(status=204)
+    serializer = EditTakeSerializer(data=request.data)
+    if not serializer.is_valid():
+        raise _first_error(serializer.errors)
+    body = serializer.validated_data['body']
+    if take.tag != Tag.REVIEW and len(body) > MAX_TOPIC_LENGTH:
+        raise TakeError(400, 'max_length', f'Topics can be up to {MAX_TOPIC_LENGTH} characters.')
+    services.edit_take(
+        take,
+        body,
+        serializer.validated_data.get('skin'),
+        spoiler=serializer.validated_data.get('spoiler'),
+    )
+    return Response(services.take_detail(take, request.user))
+
+
+@api_view(['POST'])
+def report_take(request, take_id):
+    take = get_object_or_404(Take, pk=take_id)
+    if take.author_id == request.user.id:
+        raise TakeError(400, 'own_take', 'You cannot report your own take.')
+    serializer = ReportTakeSerializer(data=request.data)
+    if not serializer.is_valid():
+        raise _first_error(serializer.errors)
+    created = services.report_take(
+        take,
+        request.user,
+        serializer.validated_data['reason'],
+        serializer.validated_data['details'],
+    )
+    return Response({'reported': True}, status=201 if created else 200)
+
+
+@api_view(['POST'])
+def share_take(request, take_id):
+    take = get_object_or_404(Take, pk=take_id)
+    serializer = ShareTakeSerializer(data=request.data)
+    if not serializer.is_valid():
+        raise _first_error(serializer.errors)
+    sent = services.share_take(
+        take,
+        request.user,
+        serializer.validated_data['recipient_ids'],
+        serializer.validated_data['message'],
+    )
+    return Response({'sent': sent}, status=201)
 
 
 class PollVoteSerializer(serializers.Serializer):
@@ -184,6 +291,14 @@ def explore_takes(request):
 
 
 @api_view(['GET'])
+def top_takes(request):
+    tag = request.query_params.get('tag') or None
+    if tag is not None and tag not in Tag.values:
+        raise TakeError(400, 'invalid_tag', 'Unknown take tag.')
+    return Response(services.top_takes(request.user, tag=tag))
+
+
+@api_view(['GET'])
 def trending_topics(request):
     return Response(services.trending_topics(request.user))
 
@@ -191,6 +306,22 @@ def trending_topics(request):
 @api_view(['GET'])
 def friend_takes(request):
     return Response(services.friend_takes(request.user))
+
+
+@api_view(['GET'])
+def friend_stories(request):
+    when = serializers.DateTimeField()
+    return Response([
+        {
+            'user': UserCardSerializer(group['user'], context={'request': request}).data,
+            'latest_at': when.to_representation(group['latest_at']),
+            'items': [
+                {**item, 'created_at': when.to_representation(item['created_at'])}
+                for item in group['items']
+            ],
+        }
+        for group in services.friend_stories(request.user)
+    ])
 
 
 @api_view(['GET'])
@@ -230,6 +361,8 @@ def set_vote(request, take_id, kind):
         raise TakeError(400, 'own_take', 'You cannot vote on your own take.')
     if kind in TOPIC_VOTE_KINDS and take.tag == Tag.REVIEW:
         raise TakeError(400, 'invalid_vote', 'Likes are only for questions and discussions.')
+    if kind in REVIEW_VOTE_KINDS and take.tag != Tag.REVIEW:
+        raise TakeError(400, 'invalid_vote', 'Up, draw and down are only for reviews.')
     serializer = VoteBodySerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     services.set_vote(take, request.user, kind, serializer.validated_data['active'])

@@ -57,10 +57,10 @@ class SummaryTests(APITestCase):
             [{'reaction': 'loved', 'count': 2}, {'reaction': 'bored', 'count': 1}],
         )
 
-    def test_trusted_percent_weights_authors_with_well_argued_votes(self):
+    def test_trusted_percent_weights_authors_with_up_votes(self):
         take = Take.objects.create(film_id=FILM, author=self.ana, reaction='loved', body='Great.')
         for voter in (self.viewer, self.ben, self.cara):
-            TakeVote.objects.create(take=take, user=voter, kind='well_argued')
+            TakeVote.objects.create(take=take, user=voter, kind='up')
         self.react(self.ana, 'loved')
         self.react(self.ben, 'bored')
         data = self.summary()
@@ -70,6 +70,94 @@ class SummaryTests(APITestCase):
     def test_my_reaction_reflects_viewer(self):
         self.react(self.viewer, 'masterpiece')
         self.assertEqual(self.summary()['my_reaction'], 'masterpiece')
+
+
+class MultiReactionTests(APITestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.viewer = User.objects.create_user(username='viewer', password='pw-123456')
+        self.ana = User.objects.create_user(username='ana', password='pw-123456')
+        self.client.force_authenticate(self.viewer)
+        self.url = f'/api/takes/films/{FILM}/reaction/'
+
+    def put(self, body):
+        return self.client.put(self.url, body, format='json')
+
+    def test_up_to_three_feelings_are_kept_in_pick_order(self):
+        data = self.put({'reactions': ['made_think', 'loved', 'shocked']}).json()
+        self.assertEqual(data['my_reactions'], ['made_think', 'loved', 'shocked'])
+        self.assertEqual(data['my_reaction'], 'made_think')
+        self.assertEqual(data['total'], 1)
+        self.assertEqual(data['counts']['loved'], 1)
+
+    def test_putting_again_replaces_the_feelings(self):
+        self.put({'reactions': ['loved', 'bored']})
+        data = self.put({'reactions': ['masterpiece']}).json()
+        self.assertEqual(data['my_reactions'], ['masterpiece'])
+        self.assertEqual(FilmReaction.objects.filter(user=self.viewer).count(), 1)
+
+    def test_empty_list_clears(self):
+        self.put({'reactions': ['loved']})
+        data = self.put({'reactions': []}).json()
+        self.assertEqual(data['my_reactions'], [])
+        self.assertIsNone(data['my_reaction'])
+
+    def test_rejects_more_than_three_duplicates_and_unknown(self):
+        for body in (
+            {'reactions': ['loved', 'bored', 'shocked', 'made_cry']},
+            {'reactions': ['loved', 'loved']},
+            {'reactions': ['nope']},
+            {'reactions': 'loved'},
+            {},
+        ):
+            response = self.put(body)
+            self.assertEqual(response.status_code, 400, body)
+            self.assertEqual(response.data['code'], 'invalid_reaction')
+
+    def test_percentages_count_people_by_their_leaning(self):
+        self.put({'reactions': ['loved', 'made_think', 'bored']})
+        FilmReaction.objects.create(film_id=FILM, user=self.ana, reaction='bored')
+        data = self.client.get(f'/api/takes/films/{FILM}/summary/').json()
+        self.assertEqual(data['total'], 2)
+        self.assertEqual(data['everyone_percent'], 50)
+        self.assertEqual(data['counts']['bored'], 2)
+
+    def test_film_takes_carry_each_authors_current_feelings(self):
+        Take.objects.create(film_id=FILM, author=self.ana, reaction='loved', body='Wow.')
+        for reaction in ('loved', 'made_cry', 'masterpiece'):
+            FilmReaction.objects.create(film_id=FILM, user=self.ana, reaction=reaction)
+        items = self.client.get(f'/api/takes/films/{FILM}/takes/').json()
+        self.assertEqual(items[0]['author_reactions'], ['loved', 'made_cry', 'masterpiece'])
+        self.assertEqual(items[0]['reaction'], 'loved')
+
+    def test_a_new_take_carries_all_the_authors_feelings(self):
+        self.put({'reactions': ['blew_mind', 'loved']})
+        item = self.client.post(
+            f'/api/takes/films/{FILM}/takes/', {'body': 'Big.'}, format='json'
+        ).json()
+        self.assertEqual(item['author_reactions'], ['blew_mind', 'loved'])
+
+    def test_takes_carry_the_authors_frame(self):
+        self.ana.equipped_frame = 'gold'
+        self.ana.save(update_fields=['equipped_frame'])
+        Take.objects.create(film_id=FILM, author=self.ana, reaction='loved', body='Wow.')
+        items = self.client.get(f'/api/takes/films/{FILM}/takes/').json()
+        self.assertEqual(items[0]['author_frame'], 'gold')
+
+    def test_a_take_can_be_up_to_1500_characters(self):
+        self.put({'reactions': ['loved']})
+        url = f'/api/takes/films/{FILM}/takes/'
+        ok = self.client.post(url, {'body': 'a' * 1500}, format='json')
+        self.assertEqual(ok.status_code, 201, ok.content)
+        Take.objects.filter(author=self.viewer).delete()
+        too_long = self.client.post(url, {'body': 'a' * 1501}, format='json')
+        self.assertEqual(too_long.status_code, 400)
+
+    def test_review_take_keeps_the_first_feeling(self):
+        take = Take.objects.create(film_id=FILM, author=self.viewer, reaction='bored', body='Hm.')
+        self.put({'reactions': ['blew_mind', 'loved']})
+        take.refresh_from_db()
+        self.assertEqual(take.reaction, 'blew_mind')
 
 
 class ReactionTests(APITestCase):
@@ -140,6 +228,34 @@ class TakeTests(APITestCase):
         self.assertTrue(data['is_mine'])
         self.assertFalse(data['is_most_helpful'])
 
+    def test_take_skin_defaults_to_normal(self):
+        FilmReaction.objects.create(film_id=FILM, user=self.viewer, reaction='loved')
+        self.client.force_authenticate(self.viewer)
+        response = self.client.post(self.url, {'body': 'Plain.'}, format='json')
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()['skin'], 'normal')
+        self.assertEqual(Take.objects.get().skin, 'normal')
+
+    def test_take_skin_is_saved_and_shown_to_others(self):
+        FilmReaction.objects.create(film_id=FILM, user=self.ana, reaction='loved')
+        self.client.force_authenticate(self.ana)
+        response = self.client.post(
+            self.url, {'body': 'Zap.', 'skin': 'electric_thunder'}, format='json'
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()['skin'], 'electric_thunder')
+
+        self.client.force_authenticate(self.viewer)
+        takes = self.client.get(self.url).json()
+        self.assertEqual(takes[0]['skin'], 'electric_thunder')
+
+    def test_unknown_take_skin_is_rejected(self):
+        FilmReaction.objects.create(film_id=FILM, user=self.viewer, reaction='loved')
+        self.client.force_authenticate(self.viewer)
+        response = self.client.post(self.url, {'body': 'Hi.', 'skin': 'rainbow'}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Take.objects.exists())
+
     def test_second_take_for_same_film_is_conflict(self):
         FilmReaction.objects.create(film_id=FILM, user=self.viewer, reaction='loved')
         self.client.force_authenticate(self.viewer)
@@ -157,7 +273,7 @@ class TakeTests(APITestCase):
     def test_takes_are_ordered_by_helpfulness_and_flag_most_helpful_for_others(self):
         older = Take.objects.create(film_id=FILM, author=self.ana, reaction='loved', body='Older.')
         Take.objects.create(film_id=FILM, author=self.ben, reaction='bored', body='Newer.')
-        TakeVote.objects.create(take=older, user=self.ben, kind='well_argued')
+        TakeVote.objects.create(take=older, user=self.ben, kind='up')
 
         self.client.force_authenticate(self.viewer)
         takes = self.client.get(self.url).json()
@@ -167,7 +283,7 @@ class TakeTests(APITestCase):
 
     def test_most_helpful_never_flags_own_take(self):
         mine = Take.objects.create(film_id=FILM, author=self.viewer, reaction='loved', body='Mine.')
-        TakeVote.objects.create(take=mine, user=self.ana, kind='well_argued')
+        TakeVote.objects.create(take=mine, user=self.ana, kind='up')
 
         self.client.force_authenticate(self.viewer)
         takes = self.client.get(self.url).json()
@@ -188,20 +304,20 @@ class VoteTests(APITestCase):
         return f'/api/takes/takes/{take_id or self.take.id}/votes/{kind}/'
 
     def test_vote_is_idempotent_and_can_be_removed(self):
-        self.client.put(self.url('well_argued'), {'active': True}, format='json')
-        response = self.client.put(self.url('well_argued'), {'active': True}, format='json')
+        self.client.put(self.url('up'), {'active': True}, format='json')
+        response = self.client.put(self.url('up'), {'active': True}, format='json')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(TakeVote.objects.filter(take=self.take, user=self.viewer).count(), 1)
-        self.assertEqual(response.json()['votes']['well_argued'], 1)
-        self.assertEqual(response.json()['my_votes'], ['well_argued'])
+        self.assertEqual(response.json()['votes']['up'], 1)
+        self.assertEqual(response.json()['my_votes'], ['up'])
 
-        response = self.client.put(self.url('well_argued'), {'active': False}, format='json')
-        self.assertEqual(response.json()['votes']['well_argued'], 0)
+        response = self.client.put(self.url('up'), {'active': False}, format='json')
+        self.assertEqual(response.json()['votes']['up'], 0)
         self.assertEqual(response.json()['my_votes'], [])
 
     def test_cannot_vote_on_own_take(self):
         self.client.force_authenticate(self.ana)
-        response = self.client.put(self.url('well_argued'), {'active': True}, format='json')
+        response = self.client.put(self.url('up'), {'active': True}, format='json')
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()['code'], 'own_take')
 
@@ -211,7 +327,7 @@ class VoteTests(APITestCase):
         self.assertEqual(response.json()['code'], 'invalid_vote')
 
     def test_missing_take_is_404(self):
-        response = self.client.put(self.url('well_argued', take_id=999999), {'active': True}, format='json')
+        response = self.client.put(self.url('up', take_id=999999), {'active': True}, format='json')
         self.assertEqual(response.status_code, 404)
 
     def test_like_and_dislike_work_on_questions(self):
@@ -345,6 +461,7 @@ class FriendActivityTests(APITestCase):
         self.assertEqual(data[0]['take']['id'], take.id)
         self.assertEqual(data[0]['take']['body'], 'Great.')
         self.assertEqual(data[0]['user']['id'], self.ana.id)
+        self.assertEqual(data[0]['user']['equipped_frame'], 'bronze')
         self.assertIn('updated_at', data[0])
 
     def test_reaction_without_take_has_null_take(self):
@@ -422,10 +539,28 @@ class TopicTests(APITestCase):
         self.post('Busy discussion', 'discussion', film='tt0000002')
         busy = Take.objects.get(body='Busy discussion')
         TakeComment.objects.create(take=busy, author=self.ana, body='Agreed')
-        TakeVote.objects.create(take=busy, user=self.ana, kind='well_argued')
+        TakeVote.objects.create(take=busy, user=self.ana, kind='up')
         feed = self.client.get('/api/takes/topics/trending/').json()
         self.assertEqual([item['body'] for item in feed], ['Busy discussion', 'Quiet question'])
         self.assertEqual(feed[0]['comment_count'], 1)
+
+    def test_top_takes_rank_all_time_by_replies_and_votes(self):
+        self.post('Quiet question', 'question', film='tt0000001')
+        self.post('Busy poll-free scene', 'scene', film='tt0000002')
+        busy = Take.objects.get(body='Busy poll-free scene')
+        Take.objects.filter(id=busy.id).update(created_at=timezone.now() - timedelta(days=60))
+        TakeComment.objects.create(take=busy, author=self.ana, body='Agreed')
+        feed = self.client.get('/api/takes/top/').json()
+        self.assertEqual([item['body'] for item in feed], ['Busy poll-free scene', 'Quiet question'])
+
+    def test_top_takes_filter_by_tag_and_reject_unknown_tag(self):
+        self.post('A question', 'question', film='tt0000001')
+        self.post('A scene', 'scene', film='tt0000002')
+        feed = self.client.get('/api/takes/top/', {'tag': 'scene'}).json()
+        self.assertEqual([item['body'] for item in feed], ['A scene'])
+        response = self.client.get('/api/takes/top/', {'tag': 'nope'})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['code'], 'invalid_tag')
 
     def test_trending_skips_reviews_and_topics_older_than_a_week(self):
         FilmReaction.objects.create(film_id=FILM, user=self.viewer, reaction='loved')
@@ -459,6 +594,14 @@ class TopicCreateTests(APITestCase):
         self.assertEqual(response.json()['tag'], 'question')
         self.assertIsNone(response.json()['reaction'])
         self.assertIsNone(response.json()['image_url'])
+
+    def test_topic_keeps_its_card_skin(self):
+        response = self.post(
+            body='Who shot it?', tag='question', film_id=FILM, skin='electric_thunder'
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()['skin'], 'electric_thunder')
+        self.assertEqual(self.client.get('/api/takes/explore/').json()[0]['skin'], 'electric_thunder')
 
     def test_photo_topic_needs_no_movie(self):
         response = self.post(body='Spot the location?', tag='discussion', image=self.photo())
@@ -627,7 +770,7 @@ class CommentStanceTests(APITestCase):
         TakeVote.objects.create(
             take=self.review,
             user=self.viewer,
-            kind='disagree_but_fair',
+            kind='draw',
         )
         response = self.client.post(
             self.comments_url(self.review),
@@ -639,7 +782,7 @@ class CommentStanceTests(APITestCase):
             TakeVote.objects.filter(
                 take=self.review,
                 user=self.viewer,
-                kind='disagree_but_fair',
+                kind='draw',
             ).count(),
             1,
         )
@@ -648,8 +791,8 @@ class CommentStanceTests(APITestCase):
             item for item in self.client.get('/api/takes/explore/').json()
             if item['id'] == self.review.id
         )
-        self.assertEqual(item['votes']['disagree_but_fair'], 1)
-        self.assertEqual(item['my_votes'], ['disagree_but_fair'])
+        self.assertEqual(item['votes']['draw'], 1)
+        self.assertEqual(item['my_votes'], ['draw'])
 
     def test_stance_is_rejected_for_non_review_take(self):
         response = self.client.post(

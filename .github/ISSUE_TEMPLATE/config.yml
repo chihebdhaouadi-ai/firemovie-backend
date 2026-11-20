@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: App issue
+    url: https://github.com/chihebdhaouadi-ai/firemovie/issues/new/choose
+    about: Screens, navigation and other Flutter problems belong in the app repository.
+  - name: Security report
+    url: https://github.com/chihebdhaouadi-ai/firemovie-backend/security/advisories/new
+    about: Report vulnerabilities privately, not in a public issue.
