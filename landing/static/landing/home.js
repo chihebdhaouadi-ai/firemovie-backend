@@ -6,6 +6,57 @@
   doc.classList.add('js');
   var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+  /* ---------- cinematic intro: logo, credit, quote, logo, then the page ---------- */
+  (function () {
+    var intro = document.getElementById('intro');
+    if (!intro) return;
+    if (!doc.classList.contains('intro-on')) {
+      intro.remove();
+      return;
+    }
+    var STEP = 2700, SHOW = 2200, START = 500, HOLD = 1600;
+    var timers = [];
+    var hint = document.getElementById('intro-hint');
+    // The last scene is the logo again.
+    var again = intro.querySelector('.intro__sc').cloneNode(true);
+    again.setAttribute('aria-hidden', 'true');
+    intro.insertBefore(again, hint);
+    var scenes = intro.querySelectorAll('.intro__sc');
+    var done = false;
+
+    function leave() {
+      if (done) return;
+      done = true;
+      timers.forEach(clearTimeout);
+      try { sessionStorage.setItem('fs-intro', '1'); } catch (e) {}
+      intro.classList.add('is-leaving');
+      setTimeout(function () {
+        doc.classList.remove('intro-on');
+        intro.remove();
+      }, 900);
+    }
+
+    scenes.forEach(function (scene, i) {
+      timers.push(setTimeout(function () { scene.classList.add('on'); }, START + i * STEP));
+      if (i < scenes.length - 1) {
+        timers.push(setTimeout(function () { scene.classList.remove('on'); }, START + i * STEP + SHOW));
+      }
+    });
+    timers.push(setTimeout(leave, START + (scenes.length - 1) * STEP + HOLD));
+
+    intro.addEventListener('click', leave);
+    intro.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
+        e.preventDefault();
+        leave();
+      }
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') leave();
+    });
+    intro.focus({ preventScroll: true });
+  })();
+
   /* ---------- reveal sections as they scroll in ---------- */
   var reveals = document.querySelectorAll('[data-reveal]');
   if ('IntersectionObserver' in window && !reduceMotion) {

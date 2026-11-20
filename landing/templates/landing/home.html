@@ -10,6 +10,18 @@
   <link rel="preload" href="{% static 'landing/assets/fonts/Poppins-Regular.ttf' %}" as="font" type="font/ttf" crossorigin>
   <link rel="preload" href="{% static 'landing/assets/fonts/Poppins-SemiBold.ttf' %}" as="font" type="font/ttf" crossorigin>
   <link rel="stylesheet" href="{% static 'landing/home.css' %}">
+  <script>
+    // The intro plays once per visit, and never for people who ask for less motion.
+    (function () {
+      var seen = false;
+      try { seen = sessionStorage.getItem('fs-intro') === '1'; } catch (e) {}
+      if (seen || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        document.documentElement.classList.add('intro-skip');
+      } else {
+        document.documentElement.classList.add('intro-on');
+      }
+    })();
+  </script>
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="FilmSage">
   <meta property="og:title" content="FilmSage: stop rating, start a conversation">
@@ -33,6 +45,24 @@
     <symbol id="i-shuffle" viewBox="0 0 16 16"><path d="M2 4.5h2.5c3 0 4 7 7 7H14M2 11.5h2.5c1.2 0 2-1 2.6-2.2M9 6.7c.6-1.2 1.4-2.2 2.5-2.2H14M12 2.5l2 2-2 2M12 9.5l2 2-2 2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   </defs>
 </svg>
+
+<div class="intro" id="intro" role="button" tabindex="0" aria-label="FilmSage intro. Click or press Enter to skip.">
+  <div class="intro__bar intro__bar--t"></div><div class="intro__bar intro__bar--b"></div>
+  <div class="intro__sc">
+    <div class="intro__brand">
+      <svg viewBox="100 250 1000 700" fill="#fff" aria-hidden="true"><use href="#logo-half"/><use href="#logo-half" transform="translate(1200 0) scale(-1 1)"/><circle cx="600" cy="600" r="75"/></svg>
+      <span class="intro__name">FILMSAGE</span>
+    </div>
+  </div>
+  <div class="intro__sc">
+    <div class="intro__sm">Created with love by</div>
+    <div class="intro__big">Softseek Corporation</div>
+  </div>
+  <div class="intro__sc">
+    <div class="intro__quote">“Cinema is art,<br>not a product.”</div>
+  </div>
+  <div class="intro__hint" id="intro-hint">Click to skip</div>
+</div>
 
 <header class="nav" id="top">
   <div class="wrap nav__in">

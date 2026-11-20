@@ -36,6 +36,13 @@ class LandingPageTests(TestCase):
             self.assertContains(response, f'id="{section}"')
         self.assertContains(response, reverse('landing:join'))
 
+    def test_home_opens_with_the_cinematic_intro(self, _discover):
+        response = self.client.get(reverse('landing:index'))
+
+        self.assertContains(response, 'id="intro"')
+        self.assertContains(response, 'Softseek Corporation')
+        self.assertContains(response, 'Cinema is art')
+
     def test_random_wall_films_are_embedded_safely_as_json(self, _discover):
         response = self.client.get(reverse('landing:index'))
 
