@@ -87,8 +87,39 @@ Retire after the app moves to `/api/lists/`.
 | POST | `friend-requests` | yes | Send a request |
 | POST | `friend-requests/<id>/accept`, `/decline`, `/cancel` | yes | Respond |
 | POST | `movie-suggestions` | yes | Suggest a film to one or more friends |
-| GET | `notifications` | yes | Notifications. `take_shared` / `take_mention` carry `take` (`id`, `film_id`, `tag`, `body`), `comment_id` and `message` |
+| GET | `notifications` | yes | Newest first (max 50), with `unread_count`. Each item: `id`, `kind`, `actor`, `read`, `created_at`. `friend_request` carries `friend_request_id` only while the request is still pending (null once answered). `movie_suggestion` carries `suggestion`; `take_shared` / `take_mention` carry `take` (`id`, `film_id`, `tag`, `body`, `spoiler`), `comment_id` and `message` |
 | POST | `notifications/read` | yes | Mark all read |
+| POST | `notifications/<id>/read` | yes | Mark one read (opening it). 404 if it isn't yours |
+
+### How notifications are made
+
+| Kind | Created when | For |
+|---|---|---|
+| `friend_request` | A request is sent. Deleted with the request on decline or cancel | The receiver |
+| `friend_accepted` | A request is accepted | The sender |
+| `movie_suggestion` | A film is suggested | Each friend picked |
+| `take_shared` | A take is shared (it also lands in the chat as a card) | Each friend picked |
+| `take_mention` | A comment tags a friend with `@username` (not strangers, not yourself) | Each friend tagged |
+
+Notifications are stored rows only: there is no push or websocket. The app reads
+them when Home loads and after the notifications screen closes. Deleting a take
+deletes its notifications. `social/test_notification_flow.py` walks every path.
+
+## Movie lists — `/api/movie-lists/`
+
+Lists of films people make and post ("Best heist films"). Friends see them,
+heart, save, share and comment on them.
+
+| Method | Path | App | Purpose |
+|---|---|---|---|
+| GET, POST | `` | yes | Your lists; create `{name, films: [{film_id, title, poster_url?}]}` (1–50 films) |
+| GET | `friends/` | yes | Friends' lists |
+| GET | `saved/` | yes | Lists you saved, newest save first |
+| GET, PATCH, DELETE | `<id>/` | yes | One list with its films; the owner renames, replaces films or deletes |
+| PUT | `<id>/like/` | yes | `{active}` — a heart, your own list included |
+| PUT | `<id>/save/` | yes | `{active}` — keep someone else's list (`own_list` for yours) |
+| POST | `<id>/share/` | yes | `{recipient_ids, message?}` — posts the list into each friend's chat as a card |
+| GET, POST | `<id>/comments/` | yes | Comments, oldest first. POST `{body?, parent_id?}` as JSON, or multipart with `image` (JPEG/PNG/WebP ≤ 5 MB); body or photo required. Each comment: `author`, `body`, `parent_id`, `image_url`, `is_writer` (the list's owner), `is_mine`, `created_at`. Error `invalid_parent` |
 
 ## Messaging — `/api/messaging/`
 
