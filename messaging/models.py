@@ -71,6 +71,10 @@ class Message(models.Model):
         VIDEO = 'video', 'Video'
         MOVIE = 'movie', 'Movie card'
         POLL = 'poll', 'Poll'
+        # A take or topic sent to a friend, or a comment that tagged them.
+        TAKE = 'take', 'Take card'
+        # A movie list sent to a friend.
+        LIST = 'list', 'List card'
 
     conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name='messages')
     # For system lines, the member who caused them.
@@ -87,7 +91,8 @@ class Message(models.Model):
     )
     attachment = models.FileField(upload_to='message_media/', blank=True, null=True)
     # Per kind: {"gif": name}, {"sticker": emoji}, {"movie": {...}},
-    # {"poll": {"question", "options"}} or, for system lines,
+    # {"poll": {"question", "options"}}, {"take": {...}, "comment": {...},
+    # "event": "shared" | "mention"} or, for system lines,
     # {"event": ..., "target": username}.
     payload = models.JSONField(default=dict, blank=True)
     # Posts may limit reactions to these emojis; empty means any.

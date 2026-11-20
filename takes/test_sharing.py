@@ -165,6 +165,86 @@ class MentionTests(APITestCase):
         self.assertEqual(Notification.objects.count(), 1)
 
 
+class ChatCardTests(APITestCase):
+    """Shares and mentions also land in the direct chat as a take card."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.ana = User.objects.create_user(username='ana', password='pw-123456')
+        self.ben = User.objects.create_user(username='ben', password='pw-123456')
+        self.cara = User.objects.create_user(username='cara', password='pw-123456')
+        befriend(self.ana, self.ben)
+        self.topic = Take.objects.create(
+            film_id=FILM, author=self.cara, tag='question', title='Free?', body='Are we?'
+        )
+
+    def _ben_chat_messages(self):
+        self.client.force_authenticate(self.ben)
+        rows = self.client.get('/api/messaging/conversations/').json()
+        rows = rows['results'] if isinstance(rows, dict) else rows
+        self.assertEqual(len(rows), 1)
+        convo = rows[0]
+        data = self.client.get(f"/api/messaging/conversations/{convo['id']}/messages/").json()
+        return convo, data['results'] if isinstance(data, dict) else data
+
+    def test_a_shared_topic_shows_up_in_the_chat_as_a_card(self):
+        self.client.force_authenticate(self.ana)
+        self.client.post(
+            f'/api/takes/takes/{self.topic.id}/share/',
+            {'recipient_ids': [self.ben.id], 'message': 'Look'},
+            format='json',
+        )
+        convo, messages = self._ben_chat_messages()
+        card = messages[-1]
+        self.assertEqual(card['kind'], 'take')
+        self.assertEqual(card['body'], 'Look')
+        self.assertEqual(card['sender']['username'], 'ana')
+        self.assertEqual(card['payload']['event'], 'shared')
+        self.assertEqual(card['payload']['take']['id'], self.topic.id)
+        self.assertEqual(card['payload']['take']['title'], 'Free?')
+        self.assertNotIn('comment', card['payload'])
+        self.assertEqual(convo['last_message']['kind'], 'take')
+
+    def test_a_mention_in_a_reply_links_to_that_exact_comment(self):
+        self.client.force_authenticate(self.ana)
+        first = self.client.post(
+            f'/api/takes/takes/{self.topic.id}/comments/', {'body': 'Yes'}, format='json'
+        ).json()
+        reply = self.client.post(
+            f'/api/takes/takes/{self.topic.id}/comments/',
+            {'body': 'Agree @ben?', 'parent_id': first['id']},
+            format='json',
+        ).json()
+        _, messages = self._ben_chat_messages()
+        card = messages[-1]
+        self.assertEqual(card['payload']['event'], 'mention')
+        self.assertEqual(card['payload']['take']['id'], self.topic.id)
+        self.assertEqual(card['payload']['comment']['id'], reply['id'])
+        self.assertEqual(card['payload']['comment']['body'], 'Agree @ben?')
+
+    def test_no_card_when_blocked(self):
+        from messaging.models import Block, Message
+
+        Block.objects.create(blocker=self.ben, blocked=self.ana)
+        self.client.force_authenticate(self.ana)
+        self.client.post(
+            f'/api/takes/takes/{self.topic.id}/share/', {'recipient_ids': [self.ben.id]}, format='json'
+        )
+        self.assertFalse(Message.objects.filter(kind='take').exists())
+
+    def test_take_cards_cannot_be_posted_by_hand(self):
+        from messaging.services import open_direct
+
+        convo = open_direct(self.ana, self.ben.id)
+        self.client.force_authenticate(self.ana)
+        response = self.client.post(
+            f'/api/messaging/conversations/{convo.id}/messages/',
+            {'kind': 'take', 'body': 'x'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+
+
 class SpoilerTests(APITestCase):
     def setUp(self):
         User = get_user_model()

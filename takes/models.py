@@ -104,6 +104,8 @@ class Take(models.Model):
     )
     reaction = models.CharField(max_length=16, choices=Reaction.choices, null=True, blank=True)
     tag = models.CharField(max_length=16, choices=Tag.choices, default=Tag.REVIEW)
+    # Topics only, optional: a short headline shown above the body.
+    title = models.CharField(max_length=120, blank=True, default='')
     body = models.TextField(max_length=1500)
     image = models.FileField(upload_to='takes/', blank=True, null=True)
     # Topics only: the body may give away the plot, so the app blurs it until tapped.
@@ -127,6 +129,25 @@ class Take(models.Model):
                 condition=Q(tag='review'),
                 name='take_unique_per_author',
             ),
+        ]
+
+
+class SavedTake(models.Model):
+    """A take someone saved to come back to; shown on their profile."""
+
+    take = models.ForeignKey(Take, on_delete=models.CASCADE, related_name='saves')
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='saved_takes',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'take_saves'
+        ordering = ('-created_at', '-id')
+        constraints = [
+            UniqueConstraint(fields=['take', 'user'], name='take_save_unique'),
         ]
 
 
@@ -217,6 +238,8 @@ class TakeComment(models.Model):
         blank=True,
         related_name='replies',
     )
+    # An optional photo; a comment needs a body, a photo or both.
+    image = models.FileField(upload_to='comments/', blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

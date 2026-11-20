@@ -29,6 +29,12 @@ def _snippet(message):
         return message.payload.get('poll', {}).get('question', '')[:80]
     if message.kind == Message.Kind.MOVIE:
         return message.payload.get('movie', {}).get('title', '')[:80]
+    if message.kind == Message.Kind.TAKE:
+        comment = message.payload.get('comment') or {}
+        take = message.payload.get('take') or {}
+        return (comment.get('body') or take.get('title') or take.get('body') or '')[:80]
+    if message.kind == Message.Kind.LIST:
+        return (message.payload.get('list') or {}).get('name', '')[:80]
     return ''
 
 
