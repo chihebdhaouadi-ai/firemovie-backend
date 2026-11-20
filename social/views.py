@@ -136,7 +136,7 @@ def cancel_request(request, request_id):
 @permission_classes([IsAuthenticated])
 def notifications(request):
     mine = Notification.objects.filter(recipient=request.user)
-    items = mine.select_related('actor', 'suggestion', 'take')[:NOTIFICATIONS_LIMIT]
+    items = mine.select_related('actor', 'suggestion', 'take', 'friend_request')[:NOTIFICATIONS_LIMIT]
     return Response({
         'unread_count': mine.filter(read=False).count(),
         'results': NotificationSerializer(items, many=True, context={'request': request}).data,
@@ -147,4 +147,14 @@ def notifications(request):
 @permission_classes([IsAuthenticated])
 def mark_notifications_read(request):
     Notification.objects.filter(recipient=request.user, read=False).update(read=True)
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def mark_notification_read(request, notification_id):
+    """Marks one of your notifications read (opening it from the list)."""
+    updated = Notification.objects.filter(recipient=request.user, pk=notification_id).update(read=True)
+    if not updated:
+        return Response({'detail': 'Not found.', 'code': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
     return Response(status=status.HTTP_204_NO_CONTENT)
